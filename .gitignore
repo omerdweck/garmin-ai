@@ -1,0 +1,14 @@
+# Secrets - לעולם לא ל-git
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docker
+*.log
+
+# OS
+.DS_Store
