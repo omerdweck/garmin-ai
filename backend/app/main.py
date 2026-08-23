@@ -8,6 +8,7 @@ Endpoints נוספים (auth, garmin, chat...) יתווספו כ-routers נפר�
 import redis
 from fastapi import FastAPI
 
+from app import models  # noqa: F401 - טוען את כל המודלים כדי ש-init_db יכיר אותם
 from app.core.config import settings
 from app.db.session import check_db_connection, init_db
 
