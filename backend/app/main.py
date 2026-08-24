@@ -9,18 +9,16 @@ in later stages, so this file stays small and clear.
 import redis
 from fastapi import FastAPI
 
-from app import models  # noqa: F401 - loads all models so init_db knows about them
+from app import models  # noqa: F401 - registers all tables on SQLModel.metadata, e.g. for Alembic autogenerate
 from app.core.config import settings
-from app.db.session import check_db_connection, init_db
+from app.db.session import check_db_connection
 from app.routers import auth
 
 app = FastAPI(title="Garmin AI - Backend", version="0.1.0")
 app.include_router(auth.router)
 
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
+# Schema creation/changes are handled by Alembic migrations (see backend/alembic/),
+# not by the app itself - run `alembic upgrade head` to bring the DB up to date.
 
 
 def check_redis_connection() -> bool:

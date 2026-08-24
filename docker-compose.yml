@@ -4,7 +4,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/code/app  # enables live reload during development without rebuilding
+      - ./backend:/code  # enables live reload during development without rebuilding; also lets alembic.ini/alembic/ live at the backend root and sync back to the host
     env_file:
       - .env
     depends_on:
