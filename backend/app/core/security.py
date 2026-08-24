@@ -8,6 +8,7 @@ the server can verify it wasn't tampered with just by checking the
 signature, with no DB lookup needed.
 """
 
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -42,3 +43,15 @@ def decode_access_token(token: str) -> Optional[int]:
         return int(payload["sub"])
     except jwt.PyJWTError:
         return None
+
+
+def generate_verification_token() -> str:
+    """
+    Generates a random, single-use token for one-off actions like email
+    verification (as opposed to create_access_token, which is for a
+    reusable, stateless session token). Uses `secrets`, not `random`:
+    `random` is a predictable pseudo-random generator meant for
+    simulations/games, not for anything security-sensitive - `secrets`
+    is built specifically to be unguessable.
+    """
+    return secrets.token_urlsafe(32)

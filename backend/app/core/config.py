@@ -30,6 +30,22 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
 
+    # SMTP - required, no defaults: without real credentials nothing should
+    # silently pretend an email was sent when it wasn't.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str
+    smtp_app_password: str
+    # The address recipients see as the sender - distinct from smtp_username,
+    # which is just the SMTP auth credential (e.g. Resend's username is the
+    # literal string "resend", not a real mailbox). "onboarding@resend.dev"
+    # is Resend's official address for testing before a custom domain is verified.
+    smtp_from_email: str = "onboarding@resend.dev"
+
+    # Base URL used to build links sent in emails (e.g. the verification
+    # link). Points straight at the API for now since there's no frontend yet.
+    app_base_url: str = "http://localhost:8000"
+
     @property
     def database_url(self) -> str:
         return (

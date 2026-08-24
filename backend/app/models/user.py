@@ -18,8 +18,12 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     hashed_password: str
 
-    # management flags: is_active will be used for email verification (next step), is_admin for the admin panel
+    # management flags: is_active is set to True once the email verification link is used, is_admin for the admin panel
     is_active: bool = Field(default=False)
     is_admin: bool = Field(default=False)
+
+    # one-time email verification token - set on register, cleared once used (or never used = still None)
+    verification_token: Optional[str] = Field(default=None, index=True)
+    verification_token_expires_at: Optional[datetime] = Field(default=None)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
