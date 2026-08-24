@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     redis_host: str = "redis"
     redis_port: int = 6379
 
+    # JWT - secret_key has no default on purpose: if it's missing from .env,
+    # pydantic must fail loudly at startup instead of silently signing tokens
+    # with a guessable value.
+    secret_key: str
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24
+
     @property
     def database_url(self) -> str:
         return (
