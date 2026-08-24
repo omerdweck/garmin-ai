@@ -1,7 +1,8 @@
 """
-ה-engine הוא אובייקט יחיד שמנהל את "בריכת" החיבורים ל-Postgres -
-לא פותחים חיבור חדש בכל בקשה, אלא שואלים חיבור פנוי מהבריכה ומחזירים
-אותו בסוף. זה ה-pattern הסטנדרטי לעבודה עם DB בכל framework רציני.
+The engine is a single object that manages a "pool" of connections to
+Postgres - we don't open a new connection on every request, we borrow
+a free one from the pool and return it when done. This is the standard
+pattern for working with a DB in any serious framework.
 """
 
 from sqlalchemy import text
@@ -13,21 +14,22 @@ engine = create_engine(settings.database_url, echo=False)
 
 
 def init_db() -> None:
-    """יוצר את הטבלאות שמוגדרות (כרגע אין עדיין מודלים - זה יתמלא בשלב 2)."""
+    """Creates all tables defined on SQLModel.metadata (registered via app/models)."""
     SQLModel.metadata.create_all(engine)
 
 
 def get_session():
     """
-    Dependency ל-FastAPI: כל endpoint שצריך גישה ל-DB יבקש את זה כפרמטר,
-    ו-FastAPI ידאג לפתוח session, למסור אותו, ולסגור אותו אוטומטית בסוף.
+    FastAPI dependency: any endpoint that needs DB access requests this as
+    a parameter, and FastAPI takes care of opening the session, handing it
+    over, and closing it automatically afterwards.
     """
     with Session(engine) as session:
         yield session
 
 
 def check_db_connection() -> bool:
-    """בדיקת תקינות - משמש את /health כדי לוודא שה-DB באמת נגיש."""
+    """Health check - used by /health to confirm the DB is actually reachable."""
     try:
         with Session(engine) as session:
             session.exec(text("SELECT 1"))

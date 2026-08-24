@@ -1,8 +1,9 @@
 """
-כל הגדרות הסביבה (env vars) עוברות דרך המקום הזה, ולא נקראות ישירות
-עם os.environ בשום מקום אחר בקוד - כך יש נקודה אחת ברורה של "מאיפה
-המערכת מקבלת את התצורה שלה", וגם type-checking אוטומטי (pydantic
-יזרוק שגיאה ברורה אם משתנה סביבה חסר, במקום כשל מוזר באמצע ריצה).
+All environment variables flow through this one place, instead of being
+read directly with os.environ anywhere else in the code - so there's a
+single clear answer to "where does the system get its configuration from",
+plus automatic type-checking (pydantic raises a clear error if an env var
+is missing, instead of a weird failure mid-run).
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,5 +31,5 @@ class Settings(BaseSettings):
         )
 
 
-# instance יחיד ומשותף לכל האפליקציה - נייבא את זה בכל מקום שצריך תצורה
+# single shared instance for the whole app - import this wherever config is needed
 settings = Settings()

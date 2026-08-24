@@ -1,8 +1,10 @@
 """
-מודל ה-User - טבלת המשתמשים של האתר עצמו (לא לבלבל עם חשבון גרמין המקושר,
-שיקבל טבלה נפרדת בשלב מאוחר יותר, כי משתמש אחד יכול תיאורטית לקשר/לנתק
-חשבון גרמין בלי שזה נוגע לזהות שלו באתר).
-`table=True` הופך את זה מ-Pydantic model רגיל לטבלת Postgres אמיתית.
+The User model - the site's own user table (not to be confused with a
+linked Garmin account, which will get its own table later, since one
+user can theoretically link/unlink a Garmin account without that
+touching their site identity).
+`table=True` turns this from a plain Pydantic model into a real
+Postgres table.
 """
 
 from datetime import datetime, timezone
@@ -16,7 +18,7 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     hashed_password: str
 
-    # דגלים לניהול: is_active ישמש לאימות מייל (שלב הבא), is_admin לפאנל הניהול
+    # management flags: is_active will be used for email verification (next step), is_admin for the admin panel
     is_active: bool = Field(default=False)
     is_admin: bool = Field(default=False)
 

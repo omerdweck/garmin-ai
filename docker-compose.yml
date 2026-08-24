@@ -4,7 +4,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/code/app  # מאפשר reload חי בזמן פיתוח בלי לבנות מחדש
+      - ./backend/app:/code/app  # enables live reload during development without rebuilding
     env_file:
       - .env
     depends_on:

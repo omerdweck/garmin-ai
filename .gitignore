@@ -1,4 +1,4 @@
-# Secrets - לעולם לא ל-git
+# Secrets - never commit to git
 .env
 
 # Python

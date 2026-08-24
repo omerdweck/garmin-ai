@@ -1,14 +1,15 @@
 """
-נקודת הכניסה של האפליקציה. כרגע יש רק endpoint אחד (/health) שמטרתו
-לוודא שהשלד כולו - API, Postgres, Redis - מחוברים נכון זה לזה.
-Endpoints נוספים (auth, garmin, chat...) יתווספו כ-routers נפרדים
-בשלבים הבאים, כדי שהקובץ הזה יישאר קטן וברור.
+Application entry point. Currently only one endpoint (/health) whose
+purpose is to confirm the whole skeleton - API, Postgres, Redis - is
+wired together correctly.
+More endpoints (auth, garmin, chat...) will be added as separate routers
+in later stages, so this file stays small and clear.
 """
 
 import redis
 from fastapi import FastAPI
 
-from app import models  # noqa: F401 - טוען את כל המודלים כדי ש-init_db יכיר אותם
+from app import models  # noqa: F401 - loads all models so init_db knows about them
 from app.core.config import settings
 from app.db.session import check_db_connection, init_db
 

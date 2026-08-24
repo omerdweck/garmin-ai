@@ -1,7 +1,8 @@
 """
-פונקציות hashing לסיסמאות. משתמשים ב-bcrypt (דרך passlib) - אלגוריתם
-איטי-בכוונה עם salt מובנה, כדי שגם דליפת ה-DB לא תחשוף סיסמאות בפועל.
-לעולם לא שומרים/משווים סיסמה בטקסט גלוי מעבר לרגע הבקשה עצמה.
+Password hashing functions. Uses bcrypt (via passlib) - a deliberately
+slow algorithm with a built-in salt, so that even a DB leak doesn't
+expose actual passwords. We never store/compare a plaintext password
+beyond the moment of the request itself.
 """
 
 from passlib.context import CryptContext

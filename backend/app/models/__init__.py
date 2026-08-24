@@ -1,8 +1,9 @@
 """
-ייבוא כל המודלים כאן, כדי ש-`SQLModel.metadata` "יכיר" את כל הטבלאות
-ברגע שמישהו עושה `import app.models` - גם אם אף אחד לא משתמש ב-User
-ישירות באותו קובץ. בלי זה, `init_db()` לא ייצור את הטבלה כי פייתון
-מעולם לא טען בפועל את המחלקה שמגדירה אותה.
+Import all models here, so that `SQLModel.metadata` "knows about" every
+table as soon as someone does `import app.models` - even if nothing in
+this file directly uses User. Without this, `init_db()` would not create
+the table, because Python would never have actually loaded the class
+that defines it.
 """
 
 from app.models.user import User  # noqa: F401
