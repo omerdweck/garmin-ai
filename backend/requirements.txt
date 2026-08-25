@@ -9,3 +9,5 @@ bcrypt==4.0.1
 PyJWT==2.9.0
 email-validator==2.2.0
 alembic==1.13.3
+garminconnect==0.3.11
+cryptography==50.0.0

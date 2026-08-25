@@ -12,10 +12,11 @@ from fastapi import FastAPI
 from app import models  # noqa: F401 - registers all tables on SQLModel.metadata, e.g. for Alembic autogenerate
 from app.core.config import settings
 from app.db.session import check_db_connection
-from app.routers import auth
+from app.routers import auth, garmin
 
 app = FastAPI(title="Garmin AI - Backend", version="0.1.0")
 app.include_router(auth.router)
+app.include_router(garmin.router)
 
 # Schema creation/changes are handled by Alembic migrations (see backend/alembic/),
 # not by the app itself - run `alembic upgrade head` to bring the DB up to date.

@@ -1,9 +1,10 @@
 """
 Import all models here, so that `SQLModel.metadata` "knows about" every
 table as soon as someone does `import app.models` - even if nothing in
-this file directly uses User. Without this, `init_db()` would not create
-the table, because Python would never have actually loaded the class
-that defines it.
+this file directly uses these classes. Alembic's autogenerate (see
+backend/alembic/env.py) relies on this to diff the real DB against the
+full set of models, not just whichever one happens to get imported first.
 """
 
+from app.models.garmin_account import GarminAccount  # noqa: F401
 from app.models.user import User  # noqa: F401

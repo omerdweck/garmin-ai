@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # link). Points straight at the API for now since there's no frontend yet.
     app_base_url: str = "http://localhost:8000"
 
+    # Symmetric encryption key for data that must be stored reversibly (e.g.
+    # Garmin session tokens) - unlike secret_key (only ever used to sign/verify,
+    # never to recover original data), this key can decrypt, so treat it with
+    # at least as much care. No default: refuse to start rather than silently
+    # store tokens encrypted with a guessable key.
+    fernet_key: str
+
     @property
     def database_url(self) -> str:
         return (
