@@ -11,6 +11,28 @@ services:
       - db
       - redis
 
+  worker:
+    build: ./backend
+    volumes:
+      - ./backend:/code
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: celery -A app.celery_app worker --loglevel=info
+
+  beat:
+    build: ./backend
+    volumes:
+      - ./backend:/code
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: celery -A app.celery_app beat --loglevel=info
+
   db:
     image: postgres:16
     environment:

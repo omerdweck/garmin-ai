@@ -10,5 +10,8 @@ venv/
 # Docker
 *.log
 
+# Celery Beat's local runtime state (last-run bookkeeping), not source code
+celerybeat-schedule*
+
 # OS
 .DS_Store
