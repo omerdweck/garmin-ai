@@ -26,6 +26,9 @@ __all__ = [
     "login_to_garmin",
     "resume_garmin_session",
     "get_daily_summary",
+    "get_sleep_data",
+    "get_hrv_data",
+    "get_activities",
 ]
 
 
@@ -77,5 +80,25 @@ def resume_garmin_session(token_bundle: str) -> Garmin:
 
 
 def get_daily_summary(session: Garmin, date: str) -> dict:
-    """date is 'YYYY-MM-DD'. Used right now just to prove a linked session works end-to-end."""
+    """date is 'YYYY-MM-DD'. Steps, calories, HR, stress, body battery for one day."""
     return session.get_stats(date)
+
+
+def get_sleep_data(session: Garmin, date: str) -> dict:
+    """date is 'YYYY-MM-DD'. The stage breakdown lives under the 'dailySleepDTO' key."""
+    return session.get_sleep_data(date)
+
+
+def get_hrv_data(session: Garmin, date: str) -> dict:
+    """
+    date is 'YYYY-MM-DD'. The daily-level values live under 'hrvSummary'
+    (lastNightAvg, status); 'hrvReadings' is a list of many readings
+    through the night - intraday time-series we deliberately don't turn
+    into structured columns (see DailyMetric's docstring).
+    """
+    return session.get_hrv_data(date)
+
+
+def get_activities(session: Garmin, start: int = 0, limit: int = 20) -> list[dict]:
+    """Most recent activities first. start/limit are for pagination through history."""
+    return session.get_activities(start, limit)

@@ -23,6 +23,7 @@ from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
 from app.schemas.garmin import GarminLinkRequest, GarminStatus
+from app.services.garmin_sync import sync_user_garmin_data
 
 router = APIRouter(prefix="/garmin", tags=["garmin"])
 
@@ -127,3 +128,33 @@ def test_garmin_pull(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Garmin is temporarily rate-limiting requests - wait a while and try again",
         )
+
+
+@router.post("/sync")
+def sync_garmin_data(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Manual trigger for the same sync logic the future scheduled Celery
+    task will call - lets us verify it end-to-end before adding scheduling.
+    """
+    account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user.id)).first()
+
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Garmin account linked")
+
+    try:
+        sync_user_garmin_data(session=session, user_id=user.id)
+    except GarminAuthError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Garmin session is no longer valid - please relink your account",
+        )
+    except GarminRateLimitError:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Garmin is temporarily rate-limiting requests - wait a while and try again",
+        )
+
+    return {"message": "Sync complete"}
