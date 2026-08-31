@@ -33,6 +33,7 @@ from app.core.garmin_client import GarminAuthError, GarminRateLimitError, login_
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
+from app.tasks import sync_one_user_task
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,9 +121,31 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Manual sync trigger. Enqueues the *same* Celery task the twice-daily
+    schedule uses (see app/tasks.py) rather than calling the sync logic
+    directly here, so both paths share one retry/notification behavior -
+    if the stored token turns out to be invalid, sync_one_user_task itself
+    sends the "please reconnect" message, whether it got here via this
+    command or the scheduled job.
+    """
+    chat_id = update.effective_chat.id
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.telegram_chat_id == chat_id)).first()
+        if user is None or not _has_linked_garmin(session, user.id):
+            await update.message.reply_text("עדיין אין חשבון גרמין מקושר. שלח /start כדי לקשר אחד.")
+            return
+        user_id = user.id
+
+    sync_one_user_task.delay(user_id)
+    await update.message.reply_text("הסנכרון התחיל ברקע - זה ייקח כמה שניות.")
+
+
 async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Placeholder until the AI conversation handler is added in a later stage."""
-    await update.message.reply_text("שלח /start כדי לקשר את חשבון הגרמין שלך.")
+    await update.message.reply_text("שלח /start כדי לקשר את חשבון הגרמין שלך, או /sync כדי לסנכרן עכשיו.")
 
 
 def build_application() -> Application:
@@ -138,6 +161,7 @@ def build_application() -> Application:
     )
 
     application.add_handler(onboarding)
+    application.add_handler(CommandHandler("sync", sync_now))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
 
     return application

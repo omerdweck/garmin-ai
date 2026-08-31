@@ -10,8 +10,10 @@ from sqlmodel import Session, select
 
 from app.celery_app import celery_app
 from app.core.garmin_client import GarminAuthError, GarminRateLimitError
+from app.core.telegram_client import send_telegram_message
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
+from app.models.user import User
 from app.services.garmin_sync import sync_user_garmin_data
 
 
@@ -32,8 +34,17 @@ def sync_one_user_task(self, user_id: int) -> None:
             # Garmin is throttling, not a real failure - back off and retry later.
             raise self.retry(exc=exc, countdown=300)
         except GarminAuthError:
-            # Bad/expired token - retrying won't fix that. sync_user_garmin_data
-            # already recorded this on GarminAccount.last_sync_error.
+            # sync_user_garmin_data already deleted the now-invalid
+            # GarminAccount (retrying wouldn't fix a genuinely rejected
+            # token). If this user has a Telegram chat, tell them so they
+            # aren't left silently un-synced until they happen to notice -
+            # this fires for both a manual /sync and the scheduled sync.
+            user = session.get(User, user_id)
+            if user is not None and user.telegram_chat_id is not None:
+                send_telegram_message(
+                    user.telegram_chat_id,
+                    "החיבור לגרמין פג תוקף. שלח /start כדי להתחבר מחדש.",
+                )
             return
 
 

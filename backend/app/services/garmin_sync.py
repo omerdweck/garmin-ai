@@ -131,9 +131,21 @@ def sync_user_garmin_data(session: Session, user_id: int, days_back: int = 2) ->
             _sync_daily_metric(session, user_id, garmin_session, target_date)
 
         _sync_activities(session, user_id, garmin_session)
-    except (GarminAuthError, GarminRateLimitError) as exc:
+    except GarminRateLimitError as exc:
+        # Transient - Garmin is throttling us right now, the stored
+        # credentials are still fine. Keep the account, just record it.
         account.last_sync_error = str(exc)
         session.add(account)
+        session.commit()
+        raise
+    except GarminAuthError:
+        # The stored token is definitively invalid (not throttling - Garmin
+        # actually rejected it), so there's nothing a retry would fix.
+        # Delete the account rather than leaving a dead link around: this
+        # is what makes /start correctly offer to relink instead of saying
+        # "already linked" forever, and what a caller (e.g. the Celery task)
+        # uses as the signal to notify the user they need to reconnect.
+        session.delete(account)
         session.commit()
         raise
 
