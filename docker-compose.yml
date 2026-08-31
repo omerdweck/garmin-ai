@@ -1,5 +1,6 @@
 services:
   api:
+    restart: unless-stopped
     build: ./backend
     ports:
       - "8000:8000"
@@ -12,6 +13,7 @@ services:
       - redis
 
   worker:
+    restart: unless-stopped
     build: ./backend
     volumes:
       - ./backend:/code
@@ -23,6 +25,7 @@ services:
     command: celery -A app.celery_app worker --loglevel=info
 
   beat:
+    restart: unless-stopped
     build: ./backend
     volumes:
       - ./backend:/code
@@ -34,6 +37,7 @@ services:
     command: celery -A app.celery_app beat --loglevel=info
 
   bot:
+    restart: unless-stopped
     build: ./backend
     volumes:
       - ./backend:/code
@@ -45,6 +49,7 @@ services:
     command: python -m app.bot
 
   db:
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -56,6 +61,7 @@ services:
       - garmin_ai_pgdata:/var/lib/postgresql/data
 
   redis:
+    restart: unless-stopped
     image: redis:7
     ports:
       - "6379:6379"
