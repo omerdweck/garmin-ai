@@ -44,4 +44,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_all_linked_accounts",
         "schedule": crontab(hour=20, minute=0),
     },
+    # Wakes up every hour and dispatches summaries to whoever chose that
+    # hour - one static schedule entry regardless of how many different
+    # times users pick. Runs at :05 so it lands just after the 20:00 sync
+    # rather than racing it, giving the evening summary fresh data.
+    "dispatch-daily-summaries": {
+        "task": "app.tasks.dispatch_daily_summaries",
+        "schedule": crontab(minute=5),
+    },
 }

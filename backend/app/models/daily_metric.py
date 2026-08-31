@@ -57,6 +57,13 @@ class DailyMetric(SQLModel, table=True):
     avg_hrv: Optional[int] = None
     hrv_status: Optional[str] = None
 
+    # from Garmin's max-metrics endpoint. Sparse by nature: Garmin only
+    # recalculates VO2 max on days with a qualifying activity (e.g. a run),
+    # so most rows have None here - readers should look back for the most
+    # recent non-null value rather than expecting today's row to have one.
+    vo2_max: Optional[float] = None
+    fitness_age: Optional[int] = None
+
     # Full raw responses from all three calls, keyed by source
     # ({"summary": ..., "sleep": ..., "hrv": ...}) - lets us backfill new
     # structured columns later without re-fetching from Garmin.

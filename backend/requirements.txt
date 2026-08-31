@@ -13,3 +13,4 @@ garminconnect==0.3.11
 cryptography==50.0.0
 celery==5.6.3
 python-telegram-bot==22.8
+anthropic==1.2.0

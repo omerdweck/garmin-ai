@@ -39,9 +39,15 @@ class User(SQLModel, table=True):
     verification_token_expires_at: Optional[datetime] = Field(default=None)
 
     # free-text training goal, read/written by the AI coach itself via
-    # tool calls (see app/core/claude_client.py, added in a later stage) -
-    # deliberately not a structured schema (target pace/distance/date...)
-    # until we know what structure is actually needed.
+    # tool calls (see app/core/claude_client.py) - deliberately not a
+    # structured schema (target pace/distance/date...) until we know what
+    # structure is actually needed.
     training_goal: Optional[str] = None
+
+    # Hour of day (0-23, Asia/Jerusalem) at which to send this user's daily
+    # summary. None = the user hasn't chosen one / opted out, and no summary
+    # is sent. Stored as an hour rather than a full time because the picker
+    # only offers whole hours and Beat only wakes up hourly anyway.
+    daily_summary_hour: Optional[int] = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -5,6 +5,7 @@ a scheduled Celery task will call later, so nothing here needs to
 change when the scheduling layer is added.
 """
 
+import time
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,7 @@ from app.core.garmin_client import (
     get_activities,
     get_daily_summary,
     get_hrv_data,
+    get_max_metrics,
     get_sleep_data,
     resume_garmin_session,
 )
@@ -35,9 +37,13 @@ def _sync_daily_metric(session: Session, user_id: int, garmin_session: Garmin, t
     summary = get_daily_summary(garmin_session, date_str)
     sleep = get_sleep_data(garmin_session, date_str)
     hrv = get_hrv_data(garmin_session, date_str)
+    max_metrics = get_max_metrics(garmin_session, date_str)
 
     sleep_dto = sleep.get("dailySleepDTO") or {}
     hrv_summary = hrv.get("hrvSummary") or {}
+    # max_metrics is a list that's empty on most days (Garmin only
+    # recalculates VO2 max after a qualifying activity).
+    generic_max = (max_metrics[0].get("generic") or {}) if max_metrics else {}
 
     existing = session.exec(
         select(DailyMetric).where(DailyMetric.user_id == user_id, DailyMetric.date == target_date)
@@ -70,7 +76,14 @@ def _sync_daily_metric(session: Session, user_id: int, garmin_session: Garmin, t
     metric.avg_hrv = hrv_summary.get("lastNightAvg")
     metric.hrv_status = hrv_summary.get("status")
 
-    metric.raw_json = {"summary": summary, "sleep": sleep, "hrv": hrv}
+    # Only overwrite when Garmin actually returned a value - a later sync of
+    # an older day must not blank out a VO2 max we already stored.
+    if generic_max.get("vo2MaxPreciseValue") is not None:
+        metric.vo2_max = generic_max.get("vo2MaxPreciseValue")
+    if generic_max.get("fitnessAge") is not None:
+        metric.fitness_age = generic_max.get("fitnessAge")
+
+    metric.raw_json = {"summary": summary, "sleep": sleep, "hrv": hrv, "max_metrics": max_metrics}
     metric.updated_at = datetime.now(timezone.utc)
 
     session.add(metric)
@@ -85,8 +98,13 @@ def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, lim
 
         # Activities don't change after the fact once recorded - if we've
         # already stored this one, there's nothing to update, just skip it.
+        # Scoped to this user: an unscoped check made a second user linking
+        # the same Garmin account silently receive zero activities.
         already_synced = session.exec(
-            select(Activity).where(Activity.garmin_activity_id == garmin_activity_id)
+            select(Activity).where(
+                Activity.user_id == user_id,
+                Activity.garmin_activity_id == garmin_activity_id,
+            )
         ).first()
         if already_synced is not None:
             continue
@@ -111,13 +129,24 @@ def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, lim
         )
 
 
-def sync_user_garmin_data(session: Session, user_id: int, days_back: int = 2) -> None:
+def sync_user_garmin_data(
+    session: Session,
+    user_id: int,
+    days_back: int = 2,
+    pause_seconds: float = 0.0,
+    activity_limit: int = 20,
+) -> None:
     """
     Upserts daily_metric for today and the previous `days_back - 1` days
     (re-covering yesterday too by default, since Garmin sometimes
     finalizes a day's data with a delay), plus any new activities.
     Always updates GarminAccount.last_sync_at/last_sync_error - a failed
     sync should be visible, not silent.
+
+    `pause_seconds` spaces out the per-day requests. The routine 2-day sync
+    leaves it at 0, but a 30-day backfill is ~120 requests in a burst, which
+    is the kind of traffic pattern that gets an IP throttled - a small pause
+    trades a slower background job for not being blocked.
     """
     account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user_id)).first()
     if account is None:
@@ -129,8 +158,10 @@ def sync_user_garmin_data(session: Session, user_id: int, days_back: int = 2) ->
         for days_ago in range(days_back):
             target_date = date_type.today() - timedelta(days=days_ago)
             _sync_daily_metric(session, user_id, garmin_session, target_date)
+            if pause_seconds:
+                time.sleep(pause_seconds)
 
-        _sync_activities(session, user_id, garmin_session)
+        _sync_activities(session, user_id, garmin_session, limit=activity_limit)
     except GarminRateLimitError as exc:
         # Transient - Garmin is throttling us right now, the stored
         # credentials are still fine. Keep the account, just record it.

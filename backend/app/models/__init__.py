@@ -7,6 +7,7 @@ full set of models, not just whichever one happens to get imported first.
 """
 
 from app.models.activity import Activity  # noqa: F401
+from app.models.chat_message import ChatMessage  # noqa: F401
 from app.models.daily_metric import DailyMetric  # noqa: F401
 from app.models.garmin_account import GarminAccount  # noqa: F401
 from app.models.user import User  # noqa: F401

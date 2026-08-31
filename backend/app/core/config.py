@@ -6,6 +6,8 @@ plus automatic type-checking (pydantic raises a clear error if an env var
 is missing, instead of a weird failure mid-run).
 """
 
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,6 +58,18 @@ class Settings(BaseSettings):
     # Telegram bot token from @BotFather - required, no default, same
     # fail-loudly-at-startup pattern as the other credentials above.
     telegram_bot_token: str
+
+    # Anthropic API key for the AI coach. Deliberately OPTIONAL (unlike the
+    # credentials above): everything that doesn't involve Claude - linking
+    # Garmin, syncing, the metrics buttons - must keep working before a key
+    # is configured. Code that needs it checks `is_claude_configured` and
+    # degrades with a clear message instead of the whole bot failing to boot.
+    anthropic_api_key: Optional[str] = None
+    claude_model: str = "claude-opus-5"
+
+    @property
+    def is_claude_configured(self) -> bool:
+        return bool(self.anthropic_api_key)
 
     @property
     def database_url(self) -> str:

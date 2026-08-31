@@ -28,6 +28,7 @@ __all__ = [
     "get_daily_summary",
     "get_sleep_data",
     "get_hrv_data",
+    "get_max_metrics",
     "get_activities",
 ]
 
@@ -107,6 +108,15 @@ def get_hrv_data(session: Garmin, date: str) -> dict:
     into structured columns (see DailyMetric's docstring).
     """
     return session.get_hrv_data(date)
+
+
+def get_max_metrics(session: Garmin, date: str) -> list[dict]:
+    """
+    date is 'YYYY-MM-DD'. VO2 max / fitness age. Returns an empty list on
+    days where Garmin didn't recalculate these (no qualifying activity),
+    which is most days - callers must handle that, not assume a value.
+    """
+    return session.get_max_metrics(date)
 
 
 def get_activities(session: Garmin, start: int = 0, limit: int = 20) -> list[dict]:

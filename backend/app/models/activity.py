@@ -16,7 +16,14 @@ from sqlmodel import Field, SQLModel
 
 class Activity(SQLModel, table=True):
     __tablename__ = "activity"
-    __table_args__ = (UniqueConstraint("garmin_activity_id", name="uq_activity_garmin_activity_id"),)
+    # Scoped to (user_id, garmin_activity_id), not garmin_activity_id alone:
+    # an activity belongs to a user, and two users can legitimately hold the
+    # same Garmin activity id - e.g. one person linked through both the
+    # website and the bot, or a shared family Garmin account. A global
+    # constraint silently made the second user's sync a no-op.
+    __table_args__ = (
+        UniqueConstraint("user_id", "garmin_activity_id", name="uq_activity_user_garmin_activity_id"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
