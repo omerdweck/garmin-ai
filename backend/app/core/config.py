@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # store tokens encrypted with a guessable key.
     fernet_key: str
 
+    # Telegram bot token from @BotFather - required, no default, same
+    # fail-loudly-at-startup pattern as the other credentials above.
+    telegram_bot_token: str
+
     @property
     def database_url(self) -> str:
         return (

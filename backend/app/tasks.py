@@ -37,6 +37,9 @@ def sync_one_user_task(self, user_id: int) -> None:
             return
 
 
+SYNC_STAGGER_SECONDS = 8
+
+
 @celery_app.task
 def sync_all_linked_accounts() -> None:
     """
@@ -44,9 +47,17 @@ def sync_all_linked_accounts() -> None:
     account, enqueues a separate sync_one_user_task instead of looping
     and doing the work directly here - that's what gives each user
     isolation and independent retries.
+
+    Each task is staggered SYNC_STAGGER_SECONDS apart (via countdown, not
+    just enqueue order - the worker's concurrency would otherwise still
+    run several at once) rather than fired all at the same instant.
+    In production, every user's Garmin login goes out from the same
+    server IP - a burst of N simultaneous logins from one IP is exactly
+    the pattern Garmin's anti-abuse system rate-limits, even though no
+    single user did anything wrong.
     """
     with Session(engine) as session:
         user_ids = session.exec(select(GarminAccount.user_id)).all()
 
-    for user_id in user_ids:
-        sync_one_user_task.delay(user_id)
+    for index, user_id in enumerate(user_ids):
+        sync_one_user_task.apply_async(args=[user_id], countdown=index * SYNC_STAGGER_SECONDS)

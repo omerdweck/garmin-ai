@@ -54,9 +54,14 @@ def login_to_garmin(email: str, password: str) -> str:
         # exactly what triggers their rate limiting).
         client = Garmin(email=email, password=password, retry_attempts=1)
         client.login()
-    except GarminConnectTooManyRequestsError as exc:
+    except (GarminConnectTooManyRequestsError, GarminConnectConnectionError) as exc:
+        # GarminConnectConnectionError also covers Cloudflare bot-challenge
+        # blocks (HTTP 403), not just real network errors - that's Garmin
+        # throttling us, not proof the credentials were checked and
+        # rejected. Only a genuine GarminConnectAuthenticationError means
+        # "these credentials were actually rejected".
         raise GarminRateLimitError(str(exc)) from exc
-    except (GarminConnectAuthenticationError, GarminConnectConnectionError) as exc:
+    except GarminConnectAuthenticationError as exc:
         raise GarminAuthError(str(exc)) from exc
 
     return client.client.dumps()
@@ -71,9 +76,14 @@ def resume_garmin_session(token_bundle: str) -> Garmin:
     try:
         client = Garmin(retry_attempts=1)
         client.login(tokenstore=token_bundle)
-    except GarminConnectTooManyRequestsError as exc:
+    except (GarminConnectTooManyRequestsError, GarminConnectConnectionError) as exc:
+        # GarminConnectConnectionError also covers Cloudflare bot-challenge
+        # blocks (HTTP 403), not just real network errors - that's Garmin
+        # throttling us, not proof the credentials were checked and
+        # rejected. Only a genuine GarminConnectAuthenticationError means
+        # "these credentials were actually rejected".
         raise GarminRateLimitError(str(exc)) from exc
-    except (GarminConnectAuthenticationError, GarminConnectConnectionError) as exc:
+    except GarminConnectAuthenticationError as exc:
         raise GarminAuthError(str(exc)) from exc
 
     return client

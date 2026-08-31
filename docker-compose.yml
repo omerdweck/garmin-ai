@@ -33,6 +33,17 @@ services:
       - redis
     command: celery -A app.celery_app beat --loglevel=info
 
+  bot:
+    build: ./backend
+    volumes:
+      - ./backend:/code
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: python -m app.bot
+
   db:
     image: postgres:16
     environment:
