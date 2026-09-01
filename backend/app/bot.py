@@ -275,7 +275,11 @@ def _quick_lookup(formatter):
                 await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
                 return
             text = formatter(session, user.id)
-        await _reply(update, text)
+        # Re-attaching the menu on every reply means the keyboard can't get
+        # lost: Telegram keeps whatever was last sent for that chat, so a
+        # user who somehow cleared it gets it back on their next tap
+        # instead of being stuck with a plain text box.
+        await _reply(update, text, reply_markup=MAIN_KEYBOARD)
 
     return handler
 
@@ -343,6 +347,17 @@ async def enter_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def exit_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data[CHAT_MODE_KEY] = False
     await update.message.reply_text("חזרת לתפריט 👇", reply_markup=MAIN_KEYBOARD)
+
+
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Explicit way to get the button menu back. Telegram only changes a
+    chat's keyboard when a message carries a new one, so a user whose
+    keyboard predates these buttons (or who hid it) needs some command
+    that re-sends it - and /start is the wrong tool once already linked.
+    """
+    context.user_data[CHAT_MODE_KEY] = False
+    await update.message.reply_text("👇 הנה התפריט", reply_markup=MAIN_KEYBOARD)
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -490,6 +505,7 @@ def build_application() -> Application:
     )
     application.add_handler(onboarding)
 
+    application.add_handler(CommandHandler("menu", show_menu))
     application.add_handler(CommandHandler("sync", sync_now))
     application.add_handler(CommandHandler("settings", show_settings))
 
@@ -521,8 +537,24 @@ def build_application() -> Application:
     return application
 
 
+async def _register_commands(application: Application) -> None:
+    """
+    Publishes the slash commands so they show up in Telegram's own "/" menu -
+    a discoverable fallback for anyone whose reply keyboard is hidden.
+    """
+    await application.bot.set_my_commands(
+        [
+            ("menu", "הצג את תפריט הכפתורים"),
+            ("sync", "סנכרון מול גרמין"),
+            ("settings", "הגדרות"),
+            ("start", "חיבור חשבון גרמין"),
+        ]
+    )
+
+
 def main() -> None:
     application = build_application()
+    application.post_init = _register_commands
     logger.info("Starting Telegram bot (long polling)")
     application.run_polling()
 
