@@ -44,6 +44,12 @@ class User(SQLModel, table=True):
     # structure is actually needed.
     training_goal: Optional[str] = None
 
+    # When the user accepted the terms of use. Recorded rather than a plain
+    # boolean so there's an auditable "consented at this point in time" -
+    # if the terms change, comparing against the revision date shows who
+    # still needs to re-accept.
+    terms_accepted_at: Optional[datetime] = None
+
     # Hour of day (0-23, Asia/Jerusalem) at which to send this user's daily
     # summary. None = the user hasn't chosen one / opted out, and no summary
     # is sent. Stored as an hour rather than a full time because the picker

@@ -22,7 +22,13 @@ import logging
 from datetime import datetime, timezone
 
 from sqlmodel import Session, select
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -35,6 +41,13 @@ from telegram.ext import (
     filters,
 )
 
+from app.bot_texts import (
+    ASK_EMAIL_TEXT,
+    ASK_PASSWORD_TEXT,
+    TERMS,
+    TERMS_DECLINED,
+    WELCOME,
+)
 from app.core.claude_client import ClaudeNotConfiguredError, chat_with_coach
 from app.core.config import settings
 from app.core.crypto import encrypt
@@ -57,7 +70,12 @@ from app.tasks import backfill_user_history_task, sync_one_user_task
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ASK_EMAIL, ASK_PASSWORD = range(2)
+AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(3)
+
+# Terms acceptance timestamp, held in memory across the onboarding
+# conversation and written to the User row only once linking succeeds -
+# same reason no User row is created before then.
+TERMS_ACCEPTED_KEY = "terms_accepted_at"
 
 # Quick lookups - each one is a single DB read, no Claude involved.
 BTN_HEART = "❤️ דופק מנוחה"
@@ -157,14 +175,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ConversationHandler.END
 
-    await update.message.reply_text(
-        "ברוך הבא ל-Garmin AI! 🏃‍♂️\n\n"
-        "אני מאמן אישי שמנתח את נתוני שעון הגרמין שלך - שינה, דופק, HRV, אימונים ועוד.\n\n"
-        "בוא נתחיל בחיבור החשבון.\n"
-        "📧 מה כתובת המייל שאיתה אתה מתחבר לגרמין?\n\n"
-        "_(אפשר לבטל בכל שלב עם /cancel)_",
+    # Strip the menu keyboard for the duration of onboarding: at this point
+    # the only valid actions are the two inline buttons, and leaving a
+    # menu on screen would invite taps that can't be honored yet.
+    await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
+    await update.effective_chat.send_message(
+        TERMS,
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("✅ מאשר", callback_data="terms:accept"),
+                    InlineKeyboardButton("❌ לא מאשר", callback_data="terms:decline"),
+                ]
+            ]
+        ),
     )
+    return AWAITING_TERMS
+
+
+async def on_terms_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "terms:decline":
+        # Editing the original message removes the buttons, so a declined
+        # prompt can't be re-answered from scrollback later.
+        await query.edit_message_text(TERMS_DECLINED)
+        return ConversationHandler.END
+
+    context.user_data[TERMS_ACCEPTED_KEY] = datetime.now(timezone.utc)
+    await query.edit_message_text("📋 תנאי השימוש אושרו ✅")
+    await query.message.chat.send_message(ASK_EMAIL_TEXT, parse_mode="Markdown")
     return ASK_EMAIL
 
 
@@ -172,12 +214,7 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Held only in memory for the next message; never written to the DB
     # unless the login actually succeeds.
     context.user_data["garmin_email"] = update.message.text.strip()
-    await update.message.reply_text(
-        "תודה! 🔒 עכשיו שלח את הסיסמה לגרמין.\n\n"
-        "_ההודעה עם הסיסמה תימחק אוטומטית מיד אחרי שאקרא אותה, "
-        "והסיסמה עצמה לא נשמרת אצלנו בשום מקום - רק אסימון גישה מוצפן._",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(ASK_PASSWORD_TEXT, parse_mode="Markdown")
     return ASK_PASSWORD
 
 
@@ -210,10 +247,20 @@ async def do_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     with Session(engine) as session:
         user = _find_user(session, chat_id)
         if user is None:
-            user = User(telegram_chat_id=chat_id, is_active=True)
+            user = User(
+                telegram_chat_id=chat_id,
+                is_active=True,
+                terms_accepted_at=context.user_data.get(TERMS_ACCEPTED_KEY),
+            )
             session.add(user)
             session.commit()
             session.refresh(user)
+        elif user.terms_accepted_at is None:
+            # Re-linking after an unlink still goes through the terms
+            # screen, so record it if this is the first time we've captured it.
+            user.terms_accepted_at = context.user_data.get(TERMS_ACCEPTED_KEY)
+            session.add(user)
+            session.commit()
 
         existing = session.exec(select(GarminAccount).where(GarminAccount.user_id == user.id)).first()
         if existing is not None:
@@ -225,12 +272,11 @@ async def do_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         session.commit()
         user_id = user.id
 
+    # No menu keyboard yet - onboarding has one step left (the summary
+    # hour), and the menu is what signals "setup is done".
     await update.effective_chat.send_message(
-        "✅ מעולה, החשבון חובר בהצלחה!\n\n"
-        "מושך עכשיו את החודש האחרון של הנתונים שלך ברקע 🔄\n"
-        "_זה ייקח כדקה - בינתיים אפשר להתחיל לשחק עם התפריט._",
+        "✅ *מעולה, החשבון חובר בהצלחה!*\n\nמושך עכשיו את הנתונים שלך מגרמין 🔄",
         parse_mode="Markdown",
-        reply_markup=MAIN_KEYBOARD,
     )
     # Two tasks on purpose: the quick one makes today's data available in
     # seconds (and reports back with the first metrics, so the user sees
@@ -393,9 +439,16 @@ async def on_summary_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if hour is None:
         await query.edit_message_text("🔕 בסדר, לא אשלח סיכום יומי.\nתמיד אפשר להפעיל דרך ⚙️ הגדרות.")
     else:
-        await query.edit_message_text(
-            f"🔔 מצוין! אשלח לך סיכום יומי כל יום ב-{hour:02d}:00.\n\nשיהיה בהצלחה! 💪"
-        )
+        await query.edit_message_text(f"🔔 מצוין! אשלח לך סיכום יומי כל יום ב-{hour:02d}:00.")
+
+    # Sending the menu here is what ends onboarding: it only appears once
+    # terms are accepted, Garmin is linked and the summary preference is
+    # set, so its arrival is the signal that setup is complete.
+    await query.message.chat.send_message(
+        "🎉 *הכל מוכן!*\n\nאפשר להתחיל - בחר מה שתרצה מהתפריט שלמטה 👇",
+        parse_mode="Markdown",
+        reply_markup=MAIN_KEYBOARD,
+    )
 
 
 async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -498,6 +551,9 @@ def build_application() -> Application:
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            # Only the inline buttons advance from here - typed text is
+            # ignored until the terms are answered one way or the other.
+            AWAITING_TERMS: [CallbackQueryHandler(on_terms_response, pattern=r"^terms:")],
             ASK_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
             ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_link)],
         },
