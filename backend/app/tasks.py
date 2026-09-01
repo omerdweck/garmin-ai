@@ -21,6 +21,7 @@ from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
 from app.services.garmin_sync import sync_user_garmin_data
+from app.services.metrics_view import format_metrics_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ LOCAL_TZ = ZoneInfo("Asia/Jerusalem")
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
-def sync_one_user_task(self, user_id: int) -> None:
+def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> None:
     """
     One task per user - if one person's sync fails (expired token,
     Garmin temporarily down), it doesn't block or fail anyone else's,
@@ -36,11 +37,24 @@ def sync_one_user_task(self, user_id: int) -> None:
     A fresh session is opened here rather than reusing a FastAPI request's
     session, since this task runs in a separate worker process with no
     request in progress at all.
+
+    `notify_on_success` is set by the user-initiated paths (the 🔄 button,
+    /sync) and left off for the twice-daily scheduled run. Without it a
+    manual sync gave the user a "started in background" message and then
+    permanent silence, which is indistinguishable from being stuck - while
+    turning it on unconditionally would mean an unprompted message twice a
+    day from the scheduler.
     """
     with Session(engine) as session:
         try:
             sync_user_garmin_data(session=session, user_id=user_id)
         except GarminRateLimitError as exc:
+            user = session.get(User, user_id)
+            if notify_on_success and user is not None and user.telegram_chat_id is not None:
+                send_telegram_message(
+                    user.telegram_chat_id,
+                    "⏳ גרמין מגבילים כרגע את הבקשות. אנסה שוב אוטומטית בעוד כמה דקות.",
+                )
             # Garmin is throttling, not a real failure - back off and retry later.
             raise self.retry(exc=exc, countdown=300)
         except GarminAuthError:
@@ -53,9 +67,24 @@ def sync_one_user_task(self, user_id: int) -> None:
             if user is not None and user.telegram_chat_id is not None:
                 send_telegram_message(
                     user.telegram_chat_id,
-                    "החיבור לגרמין פג תוקף. שלח /start כדי להתחבר מחדש.",
+                    "🔌 החיבור לגרמין פג תוקף. שלח /start כדי להתחבר מחדש.",
                 )
             return
+
+        if not notify_on_success:
+            return
+
+        user = session.get(User, user_id)
+        if user is None or user.telegram_chat_id is None:
+            return
+
+        # Send the refreshed numbers rather than a bare "done": the reason
+        # to press sync is to see current data, so making the user tap a
+        # second button for it is a pointless extra step.
+        send_telegram_message(
+            user.telegram_chat_id,
+            "✅ הסנכרון הושלם!\n\n" + format_metrics_snapshot(session, user_id),
+        )
 
 
 SYNC_STAGGER_SECONDS = 8

@@ -202,8 +202,10 @@ async def do_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=MAIN_KEYBOARD,
     )
     # Two tasks on purpose: the quick one makes today's data available in
-    # seconds, the backfill fills in a month of history behind it.
-    sync_one_user_task.delay(user_id)
+    # seconds (and reports back with the first metrics, so the user sees
+    # something concrete right after linking), the backfill fills in a month
+    # of history behind it.
+    sync_one_user_task.delay(user_id, notify_on_success=True)
     backfill_user_history_task.delay(user_id)
 
     await update.effective_chat.send_message(
@@ -261,11 +263,11 @@ async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         user_id = user.id
 
-    sync_one_user_task.delay(user_id)
-    await update.message.reply_text(
-        "🔄 הסנכרון התחיל ברקע - זה ייקח כמה שניות.\n"
-        "אחר כך תוכל ללחוץ על 📊 המדדים שלי כדי לראות את הנתונים המעודכנים."
-    )
+    # notify_on_success: the task itself sends the refreshed metrics when it
+    # finishes. Without it the user was left on "started in background" with
+    # no completion message, which reads as the bot having hung.
+    sync_one_user_task.delay(user_id, notify_on_success=True)
+    await update.message.reply_text("🔄 מסנכרן מול גרמין… אשלח לך את המדדים המעודכנים בעוד כמה שניות.")
 
 
 async def coach_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
