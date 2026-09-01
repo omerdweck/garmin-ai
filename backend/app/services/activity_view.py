@@ -173,9 +173,12 @@ def _hr_zone_lines(activity: Activity) -> list[str]:
     if not used:
         return []
 
-    lines = [_rtl("*זמן בזונות דופק*")]
+    # "אזור" and not the transliterated "זון/זונה": that transliteration
+    # collides with a Hebrew slur, which is not something to put in front
+    # of users. "אזורי דופק" is also the standard Hebrew fitness term.
+    lines = [_rtl("*זמן באזורי דופק*")]
     for zone, seconds in used:
-        lines.append(_rtl(f"   זונה {zone} — {int(seconds // 60)} דקות"))
+        lines.append(_rtl(f"   אזור {zone} — {int(seconds // 60)} דקות"))
     return lines
 
 
