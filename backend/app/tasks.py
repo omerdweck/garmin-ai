@@ -83,7 +83,7 @@ def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> N
         # second button for it is a pointless extra step.
         send_telegram_message(
             user.telegram_chat_id,
-            "✅ הסנכרון הושלם!\n\n" + format_metrics_snapshot(session, user_id),
+            "✅ *הסנכרון הושלם*\n\n" + format_metrics_snapshot(session, user_id),
         )
 
 

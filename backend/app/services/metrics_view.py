@@ -54,10 +54,34 @@ HRV_STATUS_LABELS = {
 }
 
 
+# Right-to-Left Mark. Prefixing a line with this pins its base direction to
+# RTL, which is what stops Hebrew/English/number mixes from being visually
+# reordered by the bidirectional algorithm - the original layout rendered
+# "Body Battery: שיא 51" with the value jumping ahead of its own label.
+RLM = "‏"
+
+
+def _rtl(text: str) -> str:
+    return f"{RLM}{text}"
+
+
 def _format_minutes(minutes: Optional[int]) -> Optional[str]:
     if minutes is None:
         return None
-    return f"{minutes // 60} שעות ו-{minutes % 60} דקות"
+    hours, mins = minutes // 60, minutes % 60
+    return f"{hours} שעות ו-{mins} דקות" if mins else f"{hours} שעות"
+
+
+def _date_note(value_date: Optional[date_type], reference: Optional[date_type]) -> str:
+    """
+    Marks a value that isn't from the most recent day. Rather than stamping
+    every single line with a date (which was most of the visual clutter),
+    only the stale ones say so - VO2 max is routinely weeks old, sleep
+    shouldn't be.
+    """
+    if value_date is None or reference is None or value_date == reference:
+        return ""
+    return f" _({value_date.strftime('%d/%m')})_"
 
 
 def _recent_metrics(session: Session, user_id: int, days: int = LOOKBACK_DAYS) -> list[DailyMetric]:
@@ -90,62 +114,93 @@ def format_metrics_snapshot(session: Session, user_id: int) -> str:
     if not metrics:
         return "אין עדיין נתונים מסונכרנים 🤔\nנסה ללחוץ על 🔄 סנכרון עכשיו."
 
-    lines: list[str] = ["📊 *המדדים האחרונים שלך*", ""]
+    today = metrics[0]
+    slow_metrics = _recent_metrics(session, user_id, days=SLOW_METRIC_LOOKBACK_DAYS)
 
+    lines: list[str] = [
+        _rtl(f"📊 *המדדים שלך* · {today.date.strftime('%d/%m')}"),
+    ]
+
+    # --- Sleep ---------------------------------------------------------
     sleep_minutes, sleep_date = _latest_value(metrics, "sleep_duration_minutes")
     if sleep_minutes is not None:
-        latest = next(m for m in metrics if m.date == sleep_date)
-        lines.append(f"😴 *שינה* ({sleep_date.strftime('%d/%m')}): {_format_minutes(sleep_minutes)}")
+        latest_sleep = next(m for m in metrics if m.date == sleep_date)
+        lines.append("")
+        lines.append(_rtl("😴 *שינה*"))
+        lines.append(_rtl(f"{_format_minutes(sleep_minutes)}{_date_note(sleep_date, today.date)}"))
         stages = []
-        if latest.deep_sleep_minutes is not None:
-            stages.append(f"עמוקה {latest.deep_sleep_minutes} ד'")
-        if latest.rem_sleep_minutes is not None:
-            stages.append(f"REM {latest.rem_sleep_minutes} ד'")
-        if latest.light_sleep_minutes is not None:
-            stages.append(f"קלה {latest.light_sleep_minutes} ד'")
+        if latest_sleep.deep_sleep_minutes is not None:
+            stages.append(f"עמוקה {latest_sleep.deep_sleep_minutes}")
+        if latest_sleep.rem_sleep_minutes is not None:
+            stages.append(f"REM {latest_sleep.rem_sleep_minutes}")
+        if latest_sleep.light_sleep_minutes is not None:
+            stages.append(f"קלה {latest_sleep.light_sleep_minutes}")
         if stages:
-            lines.append(f"   _{' · '.join(stages)}_")
+            lines.append(_rtl(f"_{' · '.join(stages)} דקות_"))
+
+    # --- Heart & fitness -----------------------------------------------
+    heart_lines: list[str] = []
 
     resting_hr, hr_date = _latest_value(metrics, "resting_heart_rate")
     if resting_hr is not None:
-        lines.append(f"❤️ *דופק מנוחה* ({hr_date.strftime('%d/%m')}): {resting_hr} פעימות/דקה")
+        heart_lines.append(_rtl(f"❤️ דופק מנוחה — *{resting_hr}*{_date_note(hr_date, today.date)}"))
 
     hrv, hrv_date = _latest_value(metrics, "avg_hrv")
     if hrv is not None:
         status, _ = _latest_value(metrics, "hrv_status")
-        status_text = f" ({HRV_STATUS_LABELS.get(status, status)})" if status else ""
-        lines.append(f"💓 *HRV* ({hrv_date.strftime('%d/%m')}): {hrv} ms{status_text}")
+        status_text = f" · {HRV_STATUS_LABELS.get(status, status)}" if status else ""
+        heart_lines.append(_rtl(f"💓 HRV — *{hrv}*{status_text}{_date_note(hrv_date, today.date)}"))
 
-    # Searched over a wider window than the rest - see SLOW_METRIC_LOOKBACK_DAYS.
-    slow_metrics = _recent_metrics(session, user_id, days=SLOW_METRIC_LOOKBACK_DAYS)
     vo2, vo2_date = _latest_value(slow_metrics, "vo2_max")
     if vo2 is not None:
-        lines.append(f"🫁 *VO₂ max* ({vo2_date.strftime('%d/%m')}): {vo2:.1f}")
+        heart_lines.append(_rtl(f"🫁 VO₂ max — *{vo2:.1f}*{_date_note(vo2_date, today.date)}"))
+
     fitness_age, fitness_age_date = _latest_value(slow_metrics, "fitness_age")
     if fitness_age is not None:
-        lines.append(f"🎂 *גיל כושר* ({fitness_age_date.strftime('%d/%m')}): {fitness_age}")
+        heart_lines.append(_rtl(f"🎂 גיל כושר — *{fitness_age}*{_date_note(fitness_age_date, today.date)}"))
+
+    if heart_lines:
+        lines.append("")
+        lines.append(_rtl("*לב וכושר*"))
+        lines.extend(heart_lines)
+
+    # --- Recovery -------------------------------------------------------
+    recovery_lines: list[str] = []
 
     body_battery, bb_date = _latest_value(metrics, "body_battery_high")
     if body_battery is not None:
         low, _ = _latest_value(metrics, "body_battery_low")
-        low_text = f" (נמוך: {low})" if low is not None else ""
-        lines.append(f"🔋 *Body Battery* ({bb_date.strftime('%d/%m')}): שיא {body_battery}{low_text}")
+        # Range written low-to-high so the numbers read naturally inside an
+        # RTL line, instead of "peak X (low Y)" which the bidi algorithm
+        # was visually reversing.
+        value = f"{low}–{body_battery}" if low is not None else f"{body_battery}"
+        recovery_lines.append(_rtl(f"🔋 Body Battery — *{value}*{_date_note(bb_date, today.date)}"))
 
     stress, stress_date = _latest_value(metrics, "avg_stress_level")
     if stress is not None:
-        lines.append(f"😰 *סטרס ממוצע* ({stress_date.strftime('%d/%m')}): {stress}")
+        recovery_lines.append(_rtl(f"😰 סטרס ממוצע — *{stress}*{_date_note(stress_date, today.date)}"))
 
-    today = metrics[0]
-    lines.append("")
-    lines.append(f"*היום ({today.date.strftime('%d/%m')})*")
-    lines.append(f"👟 צעדים: {today.steps:,}" if today.steps is not None else "👟 צעדים: אין נתון עדיין")
+    if recovery_lines:
+        lines.append("")
+        lines.append(_rtl("*התאוששות*"))
+        lines.extend(recovery_lines)
+
+    # --- Today's activity ----------------------------------------------
+    activity_lines: list[str] = []
+    if today.steps is not None:
+        activity_lines.append(_rtl(f"👟 צעדים — *{today.steps:,}*"))
     if today.active_calories is not None:
-        lines.append(f"🔥 קלוריות פעילות: {today.active_calories:,}")
+        activity_lines.append(_rtl(f"🔥 קלוריות פעילות — *{today.active_calories:,}*"))
     if today.distance_meters:
-        lines.append(f"📏 מרחק: {today.distance_meters / 1000:.2f} ק\"מ")
+        activity_lines.append(_rtl(f'📏 מרחק — *{today.distance_meters / 1000:.2f}* ק"מ'))
     intensity = (today.moderate_intensity_minutes or 0) + (today.vigorous_intensity_minutes or 0)
     if intensity:
-        lines.append(f"⚡ דקות עצימות: {intensity}")
+        activity_lines.append(_rtl(f"⚡ דקות עצימות — *{intensity}*"))
+
+    if activity_lines:
+        lines.append("")
+        lines.append(_rtl("*הפעילות היום*"))
+        lines.extend(activity_lines)
 
     return "\n".join(lines)
 
@@ -163,30 +218,29 @@ def format_recent_activities(session: Session, user_id: int, limit: int = 5) -> 
     if not activities:
         return "עדיין לא נמצאו אימונים מסונכרנים 🤔\nנסה ללחוץ על 🔄 סנכרון עכשיו."
 
-    lines = [f"🏃 *{len(activities)} האימונים האחרונים שלך*", ""]
+    lines = [_rtl("🏃 *האימונים האחרונים שלך*")]
     for activity in activities:
         label = ACTIVITY_TYPE_LABELS.get(activity.activity_type or "", activity.activity_type or "אימון")
-        lines.append(f"{label} — {activity.start_time.strftime('%d/%m %H:%M')}")
+        lines.append("")
+        lines.append(_rtl(f"*{label}* · {activity.start_time.strftime('%d/%m %H:%M')}"))
 
         details = []
         if activity.distance_meters:
             details.append(f'{activity.distance_meters / 1000:.2f} ק"מ')
         if activity.duration_seconds:
-            minutes = int(activity.duration_seconds // 60)
-            details.append(f"{minutes} דקות")
+            details.append(f"{int(activity.duration_seconds // 60)} דקות")
         if activity.distance_meters and activity.duration_seconds and activity.distance_meters > 100:
             pace_sec_per_km = activity.duration_seconds / (activity.distance_meters / 1000)
-            details.append(f'קצב {int(pace_sec_per_km // 60)}:{int(pace_sec_per_km % 60):02d}/ק"מ')
+            details.append(f'{int(pace_sec_per_km // 60)}:{int(pace_sec_per_km % 60):02d} לק"מ')
         if activity.avg_heart_rate:
-            details.append(f"דופק ממוצע {int(activity.avg_heart_rate)}")
+            details.append(f"דופק {int(activity.avg_heart_rate)}")
         if activity.calories:
-            details.append(f"{int(activity.calories)} קלוריות")
+            details.append(f"{int(activity.calories)} קל'")
 
         if details:
-            lines.append(f"   _{' · '.join(details)}_")
-        lines.append("")
+            lines.append(_rtl(f"_{' · '.join(details)}_"))
 
-    return "\n".join(lines).strip()
+    return "\n".join(lines)
 
 
 def format_status(session: Session, user: User) -> str:
@@ -195,24 +249,24 @@ def format_status(session: Session, user: User) -> str:
 
     account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user.id)).first()
 
-    lines = ["⚙️ *ההגדרות שלך*", ""]
+    lines = [_rtl("⚙️ *ההגדרות שלך*"), ""]
     if account is None:
-        lines.append("🔗 גרמין: *לא מחובר*")
+        lines.append(_rtl("🔗 גרמין — *לא מחובר*"))
     else:
-        lines.append("🔗 גרמין: *מחובר* ✅")
+        lines.append(_rtl("🔗 גרמין — *מחובר* ✅"))
         if account.last_sync_at:
-            lines.append(f"🔄 סנכרון אחרון: {account.last_sync_at.strftime('%d/%m %H:%M')}")
+            lines.append(_rtl(f"🔄 סנכרון אחרון — {account.last_sync_at.strftime('%d/%m %H:%M')}"))
         if account.last_sync_error:
-            lines.append("⚠️ הסנכרון האחרון נכשל - נסה שוב מאוחר יותר")
+            lines.append(_rtl("⚠️ הסנכרון האחרון נכשל - נסה שוב מאוחר יותר"))
 
     if user.daily_summary_hour is None:
-        lines.append("🔔 סיכום יומי: *כבוי*")
+        lines.append(_rtl("🔔 סיכום יומי — *כבוי*"))
     else:
-        lines.append(f"🔔 סיכום יומי: כל יום ב-{user.daily_summary_hour:02d}:00")
+        lines.append(_rtl(f"🔔 סיכום יומי — כל יום ב-*{user.daily_summary_hour:02d}:00*"))
 
     if user.training_goal:
-        lines.append(f"🎯 מטרה: {user.training_goal}")
+        lines.append(_rtl(f"🎯 מטרה — {user.training_goal}"))
 
     lines.append("")
-    lines.append("_הסנכרון האוטומטי רץ פעמיים ביום: 08:00 ו-20:00_")
+    lines.append(_rtl("_סנכרון אוטומטי רץ פעמיים ביום, ב-08:00 וב-20:00_"))
     return "\n".join(lines)
