@@ -109,6 +109,217 @@ def _latest_value(metrics: list[DailyMetric], field: str) -> tuple[object, Optio
     return None, None
 
 
+NO_DATA = "אין עדיין נתונים מסונכרנים 🤔\nנסה ללחוץ על 🔄 סנכרון."
+
+
+def _trend_arrow(current: float, previous: Optional[float]) -> str:
+    """
+    A single value is hard to judge in isolation - "51" means nothing
+    without knowing whether that's normal for you. Comparing to the
+    preceding average turns each quick-lookup into something actionable.
+    """
+    if previous is None or previous == 0:
+        return ""
+    change = (current - previous) / previous
+    if change > 0.05:
+        return " ⬆️"
+    if change < -0.05:
+        return " ⬇️"
+    return " ➡️"
+
+
+def _average(metrics: list[DailyMetric], field: str) -> Optional[float]:
+    values = [getattr(m, field) for m in metrics if getattr(m, field) is not None]
+    return sum(values) / len(values) if values else None
+
+
+def format_resting_heart_rate(session: Session, user_id: int) -> str:
+    metrics = _recent_metrics(session, user_id)
+    value, value_date = _latest_value(metrics, "resting_heart_rate")
+    if value is None:
+        return NO_DATA
+
+    # Compare against the week before this reading, not including it.
+    baseline = _average([m for m in metrics if m.date != value_date][:7], "resting_heart_rate")
+    lines = [
+        _rtl("❤️ *דופק מנוחה*"),
+        "",
+        _rtl(f"*{value}* פעימות בדקה{_trend_arrow(value, baseline)}"),
+        _rtl(f"_נמדד {value_date.strftime('%d/%m')}_"),
+    ]
+    if baseline:
+        lines.append(_rtl(f"_ממוצע השבוע האחרון: {baseline:.0f}_"))
+    return "\n".join(lines)
+
+
+def format_steps_today(session: Session, user_id: int) -> str:
+    metrics = _recent_metrics(session, user_id)
+    if not metrics:
+        return NO_DATA
+
+    today = metrics[0]
+    if today.steps is None:
+        return _rtl("👟 עדיין אין ספירת צעדים להיום 🤔\nייתכן שהשעון לא סונכרן עדיין.")
+
+    baseline = _average(metrics[1:8], "steps")
+    lines = [
+        _rtl("👟 *צעדים*"),
+        "",
+        _rtl(f"*{today.steps:,}* צעדים{_trend_arrow(today.steps, baseline)}"),
+    ]
+    if today.distance_meters:
+        lines.append(_rtl(f'_כ-{today.distance_meters / 1000:.2f} ק"מ_'))
+    if baseline:
+        lines.append(_rtl(f"_ממוצע יומי השבוע: {baseline:,.0f}_"))
+    return "\n".join(lines)
+
+
+def format_sleep(session: Session, user_id: int) -> str:
+    metrics = _recent_metrics(session, user_id)
+    minutes, sleep_date = _latest_value(metrics, "sleep_duration_minutes")
+    if minutes is None:
+        return NO_DATA
+
+    night = next(m for m in metrics if m.date == sleep_date)
+    baseline = _average([m for m in metrics if m.date != sleep_date][:7], "sleep_duration_minutes")
+
+    lines = [
+        _rtl("😴 *שינה*"),
+        "",
+        _rtl(f"*{_format_minutes(minutes)}*{_trend_arrow(minutes, baseline)}"),
+        _rtl(f"_בלילה של {sleep_date.strftime('%d/%m')}_"),
+        "",
+    ]
+    stages = []
+    if night.deep_sleep_minutes is not None:
+        stages.append(_rtl(f"🌊 עמוקה — *{night.deep_sleep_minutes}* דקות"))
+    if night.rem_sleep_minutes is not None:
+        stages.append(_rtl(f"💭 REM — *{night.rem_sleep_minutes}* דקות"))
+    if night.light_sleep_minutes is not None:
+        stages.append(_rtl(f"☁️ קלה — *{night.light_sleep_minutes}* דקות"))
+    if night.awake_minutes is not None:
+        stages.append(_rtl(f"👁 ערות — *{night.awake_minutes}* דקות"))
+    lines.extend(stages)
+
+    if baseline:
+        lines.append("")
+        lines.append(_rtl(f"_ממוצע השבוע: {_format_minutes(int(baseline))}_"))
+    return "\n".join(lines)
+
+
+def format_last_activity(session: Session, user_id: int) -> str:
+    activity = session.exec(
+        select(Activity).where(Activity.user_id == user_id).order_by(col(Activity.start_time).desc())
+    ).first()
+    if activity is None:
+        return _rtl("🏃 עדיין לא נמצאו אימונים 🤔\nנסה ללחוץ על 🔄 סנכרון.")
+
+    label = ACTIVITY_TYPE_LABELS.get(activity.activity_type or "", activity.activity_type or "אימון")
+    days_ago = (date_type.today() - activity.start_time.date()).days
+    when = "היום" if days_ago == 0 else "אתמול" if days_ago == 1 else f"לפני {days_ago} ימים"
+
+    lines = [
+        _rtl("🏃 *האימון האחרון*"),
+        "",
+        _rtl(f"*{label}*"),
+        _rtl(f"_{when} · {activity.start_time.strftime('%d/%m %H:%M')}_"),
+        "",
+    ]
+    if activity.duration_seconds:
+        lines.append(_rtl(f"⏱ משך — *{int(activity.duration_seconds // 60)}* דקות"))
+    if activity.distance_meters:
+        lines.append(_rtl(f'📏 מרחק — *{activity.distance_meters / 1000:.2f}* ק"מ'))
+    if activity.distance_meters and activity.duration_seconds and activity.distance_meters > 100:
+        pace = activity.duration_seconds / (activity.distance_meters / 1000)
+        lines.append(_rtl(f'⚡ קצב — *{int(pace // 60)}:{int(pace % 60):02d}* לק"מ'))
+    if activity.avg_heart_rate:
+        max_hr = f" (שיא {int(activity.max_heart_rate)})" if activity.max_heart_rate else ""
+        lines.append(_rtl(f"❤️ דופק ממוצע — *{int(activity.avg_heart_rate)}*{max_hr}"))
+    if activity.calories:
+        lines.append(_rtl(f"🔥 קלוריות — *{int(activity.calories)}*"))
+    return "\n".join(lines)
+
+
+def format_recovery(session: Session, user_id: int) -> str:
+    metrics = _recent_metrics(session, user_id)
+    if not metrics:
+        return NO_DATA
+
+    lines = [_rtl("🔋 *התאוששות*"), ""]
+
+    hrv, hrv_date = _latest_value(metrics, "avg_hrv")
+    if hrv is not None:
+        status, _ = _latest_value(metrics, "hrv_status")
+        baseline = _average([m for m in metrics if m.date != hrv_date][:7], "avg_hrv")
+        status_text = f" · {HRV_STATUS_LABELS.get(status, status)}" if status else ""
+        lines.append(_rtl(f"💓 HRV — *{hrv}*{status_text}{_trend_arrow(hrv, baseline)}"))
+
+    high, bb_date = _latest_value(metrics, "body_battery_high")
+    if high is not None:
+        low, _ = _latest_value(metrics, "body_battery_low")
+        value = f"{low}–{high}" if low is not None else f"{high}"
+        lines.append(_rtl(f"🔋 Body Battery — *{value}*"))
+
+    stress, stress_date = _latest_value(metrics, "avg_stress_level")
+    if stress is not None:
+        baseline = _average([m for m in metrics if m.date != stress_date][:7], "avg_stress_level")
+        lines.append(_rtl(f"😰 סטרס ממוצע — *{stress}*{_trend_arrow(stress, baseline)}"))
+
+    slow = _recent_metrics(session, user_id, days=SLOW_METRIC_LOOKBACK_DAYS)
+    vo2, vo2_date = _latest_value(slow, "vo2_max")
+    if vo2 is not None:
+        lines.append(_rtl(f"🫁 VO₂ max — *{vo2:.1f}*{_date_note(vo2_date, metrics[0].date)}"))
+
+    if len(lines) == 2:
+        return NO_DATA
+    return "\n".join(lines)
+
+
+def format_week(session: Session, user_id: int) -> str:
+    """Seven-day rollup - the view that answers 'how has my week actually been'."""
+    metrics = _recent_metrics(session, user_id, days=7)
+    if not metrics:
+        return NO_DATA
+
+    since = date_type.today() - timedelta(days=7)
+    activities = list(
+        session.exec(
+            select(Activity).where(Activity.user_id == user_id, Activity.start_time >= since)
+        ).all()
+    )
+
+    lines = [_rtl("📅 *השבוע האחרון*"), ""]
+
+    total_steps = sum(m.steps for m in metrics if m.steps is not None)
+    if total_steps:
+        lines.append(_rtl(f"👟 סה\"כ צעדים — *{total_steps:,}*"))
+        lines.append(_rtl(f"_ממוצע {total_steps // len(metrics):,} ביום_"))
+
+    avg_sleep = _average(metrics, "sleep_duration_minutes")
+    if avg_sleep:
+        lines.append("")
+        lines.append(_rtl(f"😴 שינה ממוצעת — *{_format_minutes(int(avg_sleep))}*"))
+
+    avg_rhr = _average(metrics, "resting_heart_rate")
+    if avg_rhr:
+        lines.append(_rtl(f"❤️ דופק מנוחה ממוצע — *{avg_rhr:.0f}*"))
+
+    lines.append("")
+    if activities:
+        total_distance = sum(a.distance_meters or 0 for a in activities)
+        total_minutes = sum((a.duration_seconds or 0) // 60 for a in activities)
+        lines.append(_rtl(f"🏃 אימונים — *{len(activities)}*"))
+        if total_minutes:
+            lines.append(_rtl(f"⏱ סה\"כ זמן — *{int(total_minutes)}* דקות"))
+        if total_distance > 100:
+            lines.append(_rtl(f'📏 סה"כ מרחק — *{total_distance / 1000:.1f}* ק"מ'))
+    else:
+        lines.append(_rtl("🏃 אימונים — *0*"))
+        lines.append(_rtl("_שבוע של מנוחה. מה דעתך על אימון קל מחר?_"))
+
+    return "\n".join(lines)
+
+
 def format_metrics_snapshot(session: Session, user_id: int) -> str:
     metrics = _recent_metrics(session, user_id)
     if not metrics:

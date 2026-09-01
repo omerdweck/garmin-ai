@@ -42,7 +42,16 @@ from app.core.garmin_client import GarminAuthError, GarminRateLimitError, login_
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
-from app.services.metrics_view import format_metrics_snapshot, format_recent_activities, format_status
+from app.services.metrics_view import (
+    format_last_activity,
+    format_metrics_snapshot,
+    format_recovery,
+    format_resting_heart_rate,
+    format_sleep,
+    format_status,
+    format_steps_today,
+    format_week,
+)
 from app.tasks import backfill_user_history_task, sync_one_user_task
 
 logging.basicConfig(level=logging.INFO)
@@ -50,16 +59,38 @@ logger = logging.getLogger(__name__)
 
 ASK_EMAIL, ASK_PASSWORD = range(2)
 
-BTN_METRICS = "📊 המדדים שלי"
-BTN_ACTIVITIES = "🏃 האימונים שלי"
-BTN_SYNC = "🔄 סנכרון עכשיו"
+# Quick lookups - each one is a single DB read, no Claude involved.
+BTN_HEART = "❤️ דופק מנוחה"
+BTN_STEPS = "👟 צעדים היום"
+BTN_SLEEP = "😴 שינה"
+BTN_LAST_ACTIVITY = "🏃 האימון האחרון"
+BTN_RECOVERY = "🔋 התאוששות"
+BTN_WEEK = "📅 השבוע שלי"
+BTN_METRICS = "📊 סיכום מלא"
+BTN_SYNC = "🔄 סנכרון"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
+BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [[BTN_METRICS, BTN_ACTIVITIES], [BTN_SYNC, BTN_COACH], [BTN_SETTINGS]],
+    [
+        [BTN_HEART, BTN_STEPS],
+        [BTN_SLEEP, BTN_LAST_ACTIVITY],
+        [BTN_RECOVERY, BTN_WEEK],
+        [BTN_METRICS, BTN_SYNC],
+        [BTN_COACH, BTN_SETTINGS],
+    ],
     resize_keyboard=True,
 )
+
+# Shown only while in chat mode, so the way out is always one visible tap -
+# a mode with no obvious exit is a mode users get stuck in.
+CHAT_KEYBOARD = ReplyKeyboardMarkup([[BTN_EXIT_CHAT]], resize_keyboard=True)
+
+# Key in context.user_data. Deliberately in-memory: if the bot restarts,
+# the user simply lands back in menu mode, which is the safe default -
+# they press 💬 again. Nothing is lost.
+CHAT_MODE_KEY = "in_chat_mode"
 
 # Evening hours only - a "daily summary" is an end-of-day message, and a
 # short list keeps the picker to one glance instead of 24 buttons.
@@ -229,24 +260,24 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # --------------------------------------------------------------------------
 
 
-async def show_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    with Session(engine) as session:
-        user = _find_user(session, update.effective_chat.id)
-        if user is None or not _has_linked_garmin(session, user.id):
-            await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
-            return
-        text = format_metrics_snapshot(session, user.id)
-    await _reply(update, text)
+def _quick_lookup(formatter):
+    """
+    Builds a handler for a read-only DB lookup. All the quick buttons do
+    exactly the same thing - check the account is linked, run one formatter,
+    reply - so the shared shape lives here rather than being copy-pasted
+    once per button.
+    """
 
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        with Session(engine) as session:
+            user = _find_user(session, update.effective_chat.id)
+            if user is None or not _has_linked_garmin(session, user.id):
+                await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
+                return
+            text = formatter(session, user.id)
+        await _reply(update, text)
 
-async def show_activities(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    with Session(engine) as session:
-        user = _find_user(session, update.effective_chat.id)
-        if user is None or not _has_linked_garmin(session, user.id):
-            await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
-            return
-        text = format_recent_activities(session, user.id)
-    await _reply(update, text)
+    return handler
 
 
 async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -270,18 +301,48 @@ async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("🔄 מסנכרן מול גרמין… אשלח לך את המדדים המעודכנים בעוד כמה שניות.")
 
 
-async def coach_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def enter_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Explicit opt-in to free typing. Outside this mode typed text isn't sent
+    anywhere, so the buttons stay the only way to interact - which is what
+    keeps the bot predictable (and stops questions being typed at a coach
+    that isn't connected yet).
+    """
+    with Session(engine) as session:
+        user = _find_user(session, update.effective_chat.id)
+        if user is None or not _has_linked_garmin(session, user.id):
+            await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
+            return
+
+    if not settings.is_claude_configured:
+        # Don't put the user into a mode that can't answer them.
+        await update.message.reply_text(
+            "🤖 *המאמן החכם עדיין לא מחובר*\n\n"
+            "חסר מפתח API - ברגע שיחובר תוכל לשוחח כאן חופשי על הנתונים שלך.\n"
+            "בינתיים כל הכפתורים האחרים עובדים 👍",
+            parse_mode="Markdown",
+        )
+        return
+
+    context.user_data[CHAT_MODE_KEY] = True
     await update.message.reply_text(
-        "💬 *דבר איתי חופשי!* פשוט תכתוב לי הודעה ואענה על סמך הנתונים האמיתיים שלך.\n\n"
-        "כמה דוגמאות למה שאפשר לשאול:\n"
+        "💬 *נכנסת למצב שיחה*\n\n"
+        "עכשיו אפשר לכתוב לי חופשי ואענה על סמך הנתונים האמיתיים שלך.\n\n"
+        "דוגמאות:\n"
         "• _איך ישנתי השבוע?_\n"
         "• _כמה כדאי לי לרוץ מחר?_\n"
         "• _מה זה VO₂ max ומה המצב שלי?_\n"
         "• _תבנה לי תוכנית אימונים ל-10 ק\"מ_\n"
         "• _למה אני מרגיש עייף?_\n\n"
-        "אין צורך ללחוץ על כלום - כל הודעה שתשלח מגיעה אליי 🙂",
+        "לחזרה לתפריט - לחץ ⬅️ חזרה לתפריט",
         parse_mode="Markdown",
+        reply_markup=CHAT_KEYBOARD,
     )
+
+
+async def exit_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data[CHAT_MODE_KEY] = False
+    await update.message.reply_text("חזרת לתפריט 👇", reply_markup=MAIN_KEYBOARD)
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -355,8 +416,21 @@ async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Catch-all for any text that isn't a menu button - routed to Claude."""
+    """
+    Handles typed text. Only acts when the user has explicitly entered chat
+    mode; otherwise it nudges them back to the buttons rather than silently
+    swallowing the message or spending tokens on something they may have
+    typed by accident.
+    """
     chat_id = update.effective_chat.id
+
+    if not context.user_data.get(CHAT_MODE_KEY):
+        await update.message.reply_text(
+            "אני עובד עם הכפתורים שלמטה 👇\n"
+            "כדי לשאול אותי שאלות חופשיות - לחץ על 💬 שיחה עם המאמן",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
 
     with Session(engine) as session:
         user = _find_user(session, chat_id)
@@ -367,9 +441,10 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
     if not settings.is_claude_configured:
+        context.user_data[CHAT_MODE_KEY] = False
         await update.message.reply_text(
-            "🤖 המאמן החכם עדיין לא מחובר (חסר מפתח API).\n"
-            "בינתיים אפשר להשתמש ב-📊 המדדים שלי וב-🏃 האימונים שלי."
+            "🤖 המאמן החכם עדיין לא מחובר (חסר מפתח API).",
+            reply_markup=MAIN_KEYBOARD,
         )
         return
 
@@ -387,14 +462,19 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         reply = await asyncio.to_thread(_run)
     except ClaudeNotConfiguredError:
-        await update.message.reply_text("🤖 המאמן החכם עדיין לא מחובר (חסר מפתח API).")
+        context.user_data[CHAT_MODE_KEY] = False
+        await update.message.reply_text(
+            "🤖 המאמן החכם עדיין לא מחובר (חסר מפתח API).", reply_markup=MAIN_KEYBOARD
+        )
         return
     except Exception:
         logger.exception("Coach chat failed for chat_id %s", chat_id)
         await update.message.reply_text("משהו השתבש אצלי 😕 נסה שוב בעוד רגע.")
         return
 
-    await _reply(update, reply)
+    # Keep the exit button on screen so the way out stays visible for as
+    # long as the conversation runs.
+    await _reply(update, reply, reply_markup=CHAT_KEYBOARD)
 
 
 def build_application() -> Application:
@@ -414,20 +494,28 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("settings", show_settings))
 
     # Exact-text handlers for the menu buttons, registered before the
-    # catch-all so a button tap never gets sent to Claude as a question.
+    # catch-all so a button tap is never mistaken for a typed question -
+    # including while in chat mode, so the exit button always works.
     for button_text, handler in (
-        (BTN_METRICS, show_metrics),
-        (BTN_ACTIVITIES, show_activities),
+        (BTN_HEART, _quick_lookup(format_resting_heart_rate)),
+        (BTN_STEPS, _quick_lookup(format_steps_today)),
+        (BTN_SLEEP, _quick_lookup(format_sleep)),
+        (BTN_LAST_ACTIVITY, _quick_lookup(format_last_activity)),
+        (BTN_RECOVERY, _quick_lookup(format_recovery)),
+        (BTN_WEEK, _quick_lookup(format_week)),
+        (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
         (BTN_SYNC, sync_now),
-        (BTN_COACH, coach_intro),
+        (BTN_COACH, enter_chat_mode),
         (BTN_SETTINGS, show_settings),
+        (BTN_EXIT_CHAT, exit_chat_mode),
     ):
         application.add_handler(MessageHandler(filters.Text([button_text]), handler))
 
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
 
-    # Anything else the user types is a question for the coach.
+    # Typed text - answered by the coach only while in chat mode, otherwise
+    # pointed back at the buttons.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, talk_to_coach))
 
     return application
