@@ -24,6 +24,13 @@ class GarminAccount(SQLModel, table=True):
 
     linked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # Set when the user disconnects themselves. The row and its token are
+    # deliberately kept, so reconnecting is one tap with no password - a
+    # user-initiated pause is not the same event as a token Garmin has
+    # rejected, which really is unusable and gets the row deleted instead.
+    # NULL means active.
+    disconnected_at: Optional[datetime] = Field(default=None)
+
     # updated by the (future) scheduled sync job - lets the admin dashboard
     # surface "which users' Garmin sync is failing" per the architecture doc
     last_sync_at: Optional[datetime] = Field(default=None)

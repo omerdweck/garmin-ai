@@ -20,6 +20,7 @@ handled exactly once, at link time.
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlmodel import Session, select
 from telegram import (
@@ -55,6 +56,15 @@ from app.core.garmin_client import GarminAuthError, GarminRateLimitError, login_
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
+from app.services.account_lifecycle import (
+    AccountState,
+    delete_user_completely,
+    disconnect,
+    find_user_by_chat,
+    get_account,
+    reconnect,
+    resolve_state,
+)
 from app.services.metrics_view import (
     format_last_activity,
     format_metrics_snapshot,
@@ -129,7 +139,8 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🔔 שינוי שעת הסיכום היומי", callback_data="settings:summary_hour")],
-            [InlineKeyboardButton("🔌 ניתוק חשבון הגרמין", callback_data="settings:unlink")],
+            [InlineKeyboardButton("🔌 ניתוק זמני (הנתונים נשמרים)", callback_data="settings:unlink")],
+            [InlineKeyboardButton("🗑 מחיקת המשתמש והנתונים", callback_data="settings:delete")],
         ]
     )
 
@@ -149,11 +160,52 @@ async def _reply(update: Update, text: str, **kwargs) -> None:
 
 
 def _find_user(session: Session, chat_id: int) -> User | None:
-    return session.exec(select(User).where(User.telegram_chat_id == chat_id)).first()
+    return find_user_by_chat(session, chat_id)
 
 
-def _has_linked_garmin(session: Session, user_id: int) -> bool:
-    return session.exec(select(GarminAccount).where(GarminAccount.user_id == user_id)).first() is not None
+def _reconnect_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔗 חבר מחדש", callback_data="account:reconnect")]])
+
+
+# What to tell someone whose state doesn't permit the action they tried.
+# Centralised so every entry point gives the same answer to the same
+# situation instead of each handler inventing its own wording.
+BLOCKED_MESSAGES = {
+    AccountState.UNKNOWN: ("👋 שלח /start כדי להתחיל", None),
+    AccountState.NEEDS_TERMS: (
+        "📋 כדי להשתמש במערכת עליך לאשר את תנאי השימוש.\nשלח /start כדי לעבור עליהם ולאשר.",
+        None,
+    ),
+    AccountState.NEEDS_LINK: (
+        "🔗 חשבון הגרמין שלך אינו מחובר כרגע.\nשלח /start כדי לחבר אותו.",
+        None,
+    ),
+    AccountState.DISCONNECTED: (
+        "🔌 החשבון שלך מנותק כרגע.\nהנתונים שלך שמורים - לחיצה אחת ואתה חוזר לפעולה 👇",
+        "reconnect",
+    ),
+}
+
+
+async def _require_active(update: Update) -> Optional[int]:
+    """
+    Gate every action goes through. Returns the user id when the account is
+    usable, otherwise replies with the right explanation for that state and
+    returns None.
+    """
+    with Session(engine) as session:
+        state, user = resolve_state(session, update.effective_chat.id)
+        user_id = user.id if user else None
+
+    if state is AccountState.ACTIVE:
+        return user_id
+
+    text, keyboard = BLOCKED_MESSAGES[state]
+    await update.effective_chat.send_message(
+        text,
+        reply_markup=_reconnect_keyboard() if keyboard == "reconnect" else ReplyKeyboardRemove(),
+    )
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -161,36 +213,68 @@ def _has_linked_garmin(session: Session, user_id: int) -> bool:
 # --------------------------------------------------------------------------
 
 
+def _terms_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ מאשר", callback_data="terms:accept"),
+                InlineKeyboardButton("❌ לא מאשר", callback_data="terms:decline"),
+            ]
+        ]
+    )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    chat_id = update.effective_chat.id
-
+    """
+    Entry point for every state. Which of the five it lands in decides how
+    much of onboarding actually runs - a returning user should never be
+    asked to redo a step they've already completed.
+    """
     with Session(engine) as session:
-        user = _find_user(session, chat_id)
-        already_linked = user is not None and _has_linked_garmin(session, user.id)
+        state, _ = resolve_state(session, update.effective_chat.id)
 
-    if already_linked:
+    if state is AccountState.ACTIVE:
         await update.message.reply_text(
-            "שלום שוב! 👋 החשבון שלך כבר מחובר לגרמין.\nבחר פעולה מהתפריט למטה 👇",
+            "שלום שוב! 👋 החשבון שלך מחובר ומוכן.\nבחר פעולה מהתפריט למטה 👇",
             reply_markup=MAIN_KEYBOARD,
         )
         return ConversationHandler.END
 
-    # Strip the menu keyboard for the duration of onboarding: at this point
-    # the only valid actions are the two inline buttons, and leaving a
-    # menu on screen would invite taps that can't be honored yet.
-    await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
-    await update.effective_chat.send_message(
-        TERMS,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("✅ מאשר", callback_data="terms:accept"),
-                    InlineKeyboardButton("❌ לא מאשר", callback_data="terms:decline"),
-                ]
-            ]
-        ),
-    )
+    if state is AccountState.DISCONNECTED:
+        await update.message.reply_text(
+            "🔌 *החשבון שלך מנותק כרגע*\n\n"
+            "כל הנתונים וההגדרות שלך שמורים - אין צורך להזין סיסמה מחדש.",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await update.effective_chat.send_message("מוכן לחזור? 👇", reply_markup=_reconnect_keyboard())
+        return ConversationHandler.END
+
+    if state is AccountState.NEEDS_LINK:
+        # Terms already accepted and the user row already exists - the only
+        # thing missing is a working credential, so skip straight to it.
+        await update.message.reply_text(
+            "🔗 *צריך לחבר מחדש את חשבון הגרמין*\n\n"
+            "אנחנו זוכרים אותך ואת כל הנתונים שלך - רק ההתחברות לגרמין צריכה חידוש.\n\n"
+            "📧 מה כתובת המייל שלך ב-Garmin Connect?",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ASK_EMAIL
+
+    # Strip the menu keyboard for the rest of onboarding: the only valid
+    # actions from here are the inline buttons, and leaving a menu on
+    # screen would invite taps that can't be honored yet.
+    if state is AccountState.NEEDS_TERMS:
+        await update.message.reply_text(
+            "📋 *כדי להמשיך צריך לאשר את תנאי השימוש*\n\nאנחנו זוכרים אותך, רק האישור חסר.",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    else:
+        await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
+
+    await update.effective_chat.send_message(TERMS, parse_mode="Markdown", reply_markup=_terms_keyboard())
     return AWAITING_TERMS
 
 
@@ -204,8 +288,29 @@ async def on_terms_response(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text(TERMS_DECLINED)
         return ConversationHandler.END
 
-    context.user_data[TERMS_ACCEPTED_KEY] = datetime.now(timezone.utc)
+    accepted_at = datetime.now(timezone.utc)
+    context.user_data[TERMS_ACCEPTED_KEY] = accepted_at
     await query.edit_message_text("📋 תנאי השימוש אושרו ✅")
+
+    # An already-known user (e.g. one who predates the terms screen) gets
+    # the acceptance written immediately - there's no pending link step to
+    # defer it to, and their Garmin may already be connected.
+    with Session(engine) as session:
+        state, user = resolve_state(session, query.message.chat_id)
+        if user is not None and user.terms_accepted_at is None:
+            user.terms_accepted_at = accepted_at
+            session.add(user)
+            session.commit()
+        account_exists = user is not None and get_account(session, user.id) is not None
+
+    if account_exists:
+        await query.message.chat.send_message(
+            "🎉 *הכל מוכן!*\n\nהחשבון שלך כבר מחובר - אפשר להתחיל 👇",
+            parse_mode="Markdown",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return ConversationHandler.END
+
     await query.message.chat.send_message(ASK_EMAIL_TEXT, parse_mode="Markdown")
     return ASK_EMAIL
 
@@ -315,12 +420,11 @@ def _quick_lookup(formatter):
     """
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = await _require_active(update)
+        if user_id is None:
+            return
         with Session(engine) as session:
-            user = _find_user(session, update.effective_chat.id)
-            if user is None or not _has_linked_garmin(session, user.id):
-                await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
-                return
-            text = formatter(session, user.id)
+            text = formatter(session, user_id)
         # Re-attaching the menu on every reply means the keyboard can't get
         # lost: Telegram keeps whatever was last sent for that chat, so a
         # user who somehow cleared it gets it back on their next tap
@@ -337,12 +441,9 @@ async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     path means both routes get the same retry and reconnect-notification
     behavior.
     """
-    with Session(engine) as session:
-        user = _find_user(session, update.effective_chat.id)
-        if user is None or not _has_linked_garmin(session, user.id):
-            await update.message.reply_text("עדיין אין חשבון גרמין מקושר. שלח /start כדי לקשר אחד 🔗")
-            return
-        user_id = user.id
+    user_id = await _require_active(update)
+    if user_id is None:
+        return
 
     # notify_on_success: the task itself sends the refreshed metrics when it
     # finishes. Without it the user was left on "started in background" with
@@ -358,11 +459,8 @@ async def enter_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     keeps the bot predictable (and stops questions being typed at a coach
     that isn't connected yet).
     """
-    with Session(engine) as session:
-        user = _find_user(session, update.effective_chat.id)
-        if user is None or not _has_linked_garmin(session, user.id):
-            await update.message.reply_text("צריך קודם לחבר חשבון גרמין - שלח /start 🔗")
-            return
+    if await _require_active(update) is None:
+        return
 
     if not settings.is_claude_configured:
         # Don't put the user into a mode that can't answer them.
@@ -469,13 +567,90 @@ async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if user is None:
                 await query.edit_message_text("אין חשבון מקושר.")
                 return
-            account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user.id)).first()
-            if account is not None:
-                session.delete(account)
-                session.commit()
+            disconnect(session, user.id)
+
         await query.edit_message_text(
-            "🔌 חשבון הגרמין נותק.\nהנתונים ההיסטוריים שלך נשמרו.\nשלח /start כדי לחבר מחדש."
+            "🔌 *החשבון נותק*\n\n"
+            "הסנכרון האוטומטי והסיכום היומי הופסקו.\n"
+            "כל הנתונים, ההגדרות וההתחברות שלך *נשמרו* - חזרה היא לחיצה אחת, בלי סיסמה.",
+            parse_mode="Markdown",
         )
+        await query.message.chat.send_message(
+            "רוצה לחזור? 👇", reply_markup=_reconnect_keyboard()
+        )
+        return
+
+    if action == "delete":
+        await query.message.chat.send_message(
+            "⚠️ *מחיקת המשתמש*\n\n"
+            "הפעולה תמחק לצמיתות את *כל* המידע שלך:\n"
+            "• כל נתוני הבריאות והאימונים שנאספו\n"
+            "• היסטוריית השיחות עם המאמן\n"
+            "• החיבור לחשבון הגרמין וההגדרות שלך\n\n"
+            "*לא ניתן לשחזר.* אם תתחבר שוב בעתיד, תיקלט כמשתמש חדש לגמרי.\n\n"
+            "האם אתה בטוח?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("🗑 ברצוני למחוק", callback_data="account:delete_confirm")],
+                    [InlineKeyboardButton("↩️ איני רוצה למחוק", callback_data="account:delete_cancel")],
+                ]
+            ),
+        )
+
+
+async def on_account_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split(":", 1)[1]
+    chat_id = query.message.chat_id
+
+    if action == "reconnect":
+        with Session(engine) as session:
+            user = _find_user(session, chat_id)
+            if user is None:
+                await query.edit_message_text("שלח /start כדי להתחיל 👋")
+                return
+            user_id = user.id
+            already_current = reconnect(session, user_id)
+
+        await query.edit_message_text("✅ חזרת לפעולה!")
+        if already_current:
+            # Data already synced today - re-fetching it would spend time
+            # and Garmin rate-limit budget to learn nothing new.
+            await query.message.chat.send_message(
+                "הנתונים שלך כבר מעודכנים להיום, אז אפשר להתחיל מיד 👇",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        else:
+            sync_one_user_task.delay(user_id, notify_on_success=True)
+            await query.message.chat.send_message(
+                "🔄 מסנכרן את הנתונים העדכניים… אשלח לך אותם עוד רגע.",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        return
+
+    if action == "delete_cancel":
+        await query.edit_message_text("👍 לא נמחק כלום. החשבון שלך נשאר כמו שהוא.")
+        return
+
+    if action == "delete_confirm":
+        with Session(engine) as session:
+            user = _find_user(session, chat_id)
+            if user is None:
+                await query.edit_message_text("לא נמצא משתמש למחיקה.")
+                return
+            delete_user_completely(session, user.id)
+
+        context.user_data.clear()
+        await query.edit_message_text(
+            "🗑 *הכל נמחק*\n\nכל המידע שלך הוסר מהמערכת לצמיתות.\n\n"
+            "תודה שניסית! אם תרצה לחזור מתישהו - שלח /start ונתחיל מאפס.",
+            parse_mode="Markdown",
+        )
+        # Clear the menu too: leaving it up would offer actions that now
+        # resolve to "unknown user".
+        await query.message.chat.send_message("👋", reply_markup=ReplyKeyboardRemove())
 
 
 # --------------------------------------------------------------------------
@@ -500,13 +675,9 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    with Session(engine) as session:
-        user = _find_user(session, chat_id)
-        if user is None or not _has_linked_garmin(session, user.id):
-            await update.message.reply_text(
-                "כדי שאוכל לענות על סמך הנתונים שלך, צריך קודם לחבר את חשבון הגרמין.\nשלח /start 🔗"
-            )
-            return
+    if await _require_active(update) is None:
+        context.user_data[CHAT_MODE_KEY] = False
+        return
 
     if not settings.is_claude_configured:
         context.user_data[CHAT_MODE_KEY] = False
@@ -585,6 +756,7 @@ def build_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
+    application.add_handler(CallbackQueryHandler(on_account_action, pattern=r"^account:"))
 
     # Typed text - answered by the coach only while in chat mode, otherwise
     # pointed back at the buttons.

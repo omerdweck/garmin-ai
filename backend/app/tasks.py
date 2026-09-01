@@ -139,7 +139,11 @@ def sync_all_linked_accounts() -> None:
     single user did anything wrong.
     """
     with Session(engine) as session:
-        user_ids = session.exec(select(GarminAccount.user_id)).all()
+        # Disconnected accounts keep their token so reconnecting is easy,
+        # but must not be synced - the user asked us to stop.
+        user_ids = session.exec(
+            select(GarminAccount.user_id).where(GarminAccount.disconnected_at.is_(None))
+        ).all()
 
     for index, user_id in enumerate(user_ids):
         sync_one_user_task.apply_async(args=[user_id], countdown=index * SYNC_STAGGER_SECONDS)
@@ -190,7 +194,13 @@ def dispatch_daily_summaries() -> None:
         user_ids = session.exec(
             select(User.id)
             .join(GarminAccount, GarminAccount.user_id == User.id)
-            .where(User.daily_summary_hour == current_hour, User.telegram_chat_id.is_not(None))
+            .where(
+                User.daily_summary_hour == current_hour,
+                User.telegram_chat_id.is_not(None),
+                # Same reason as the sync fan-out: a disconnected user
+                # asked us to stop, so no unprompted daily message either.
+                GarminAccount.disconnected_at.is_(None),
+            )
         ).all()
 
     for index, user_id in enumerate(user_ids):
