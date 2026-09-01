@@ -30,6 +30,7 @@ __all__ = [
     "get_hrv_data",
     "get_max_metrics",
     "get_activities",
+    "get_exercise_sets",
 ]
 
 
@@ -122,3 +123,12 @@ def get_max_metrics(session: Garmin, date: str) -> list[dict]:
 def get_activities(session: Garmin, start: int = 0, limit: int = 20) -> list[dict]:
     """Most recent activities first. start/limit are for pagination through history."""
     return session.get_activities(start, limit)
+
+
+def get_exercise_sets(session: Garmin, activity_id: int) -> dict:
+    """
+    Per-set detail for a strength workout: each set's detected exercise
+    category, rep count and weight. Only meaningful for strength training -
+    other activity types return an empty set list.
+    """
+    return session.get_activity_exercise_sets(activity_id)

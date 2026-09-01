@@ -56,6 +56,14 @@ from app.core.garmin_client import GarminAuthError, GarminRateLimitError, login_
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
+from app.models.activity import Activity
+from app.services.activity_view import (
+    activity_type_counts,
+    format_activity_detail,
+    recent_of_type,
+    summary_line,
+    type_label,
+)
 from app.services.account_lifecycle import (
     AccountState,
     delete_user_completely,
@@ -65,8 +73,8 @@ from app.services.account_lifecycle import (
     reconnect,
     resolve_state,
 )
+from app.services.garmin_sync import ensure_exercise_sets
 from app.services.metrics_view import (
-    format_last_activity,
     format_metrics_snapshot,
     format_recovery,
     format_resting_heart_rate,
@@ -91,7 +99,7 @@ TERMS_ACCEPTED_KEY = "terms_accepted_at"
 BTN_HEART = "❤️ דופק מנוחה"
 BTN_STEPS = "👟 צעדים היום"
 BTN_SLEEP = "😴 שינה"
-BTN_LAST_ACTIVITY = "🏃 האימון האחרון"
+BTN_ACTIVITIES = "🏃 האימונים שלי"
 BTN_RECOVERY = "🔋 התאוששות"
 BTN_WEEK = "📅 השבוע שלי"
 BTN_METRICS = "📊 סיכום מלא"
@@ -103,7 +111,7 @@ BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         [BTN_HEART, BTN_STEPS],
-        [BTN_SLEEP, BTN_LAST_ACTIVITY],
+        [BTN_SLEEP, BTN_ACTIVITIES],
         [BTN_RECOVERY, BTN_WEEK],
         [BTN_METRICS, BTN_SYNC],
         [BTN_COACH, BTN_SETTINGS],
@@ -452,6 +460,119 @@ async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("🔄 מסנכרן מול גרמין… אשלח לך את המדדים המעודכנים בעוד כמה שניות.")
 
 
+async def show_activity_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    First level of the workouts browser: which kinds of training this user
+    actually does. Only types they have are listed - a menu offering
+    activities you've never done is noise, not choice.
+    """
+    user_id = await _require_active(update)
+    if user_id is None:
+        return
+
+    with Session(engine) as session:
+        counts = activity_type_counts(session, user_id)
+
+    if not counts:
+        await update.message.reply_text(
+            "עדיין לא נמצאו אימונים 🤔\nנסה ללחוץ על 🔄 סנכרון.", reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    rows = [
+        [InlineKeyboardButton(f"{type_label(t)} ({n})", callback_data=f"acttype:{t}")]
+        for t, n in counts
+    ]
+    await update.message.reply_text(
+        "🏃 *האימונים שלך*\n\nבחר סוג אימון כדי לראות את הנתונים שלו 👇",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+async def on_activity_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Second level: the individual workouts of the chosen type."""
+    query = update.callback_query
+    await query.answer()
+    activity_type = query.data.split(":", 1)[1]
+
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        if user is None:
+            await query.edit_message_text("שלח /start כדי להתחיל 👋")
+            return
+        activities = recent_of_type(session, user.id, activity_type)
+        rows = [
+            [InlineKeyboardButton(summary_line(a), callback_data=f"act:{a.id}")] for a in activities
+        ]
+
+    rows.append([InlineKeyboardButton("⬅️ סוגי אימון", callback_data="acttype_menu")])
+    await query.edit_message_text(
+        f"{type_label(activity_type)}\n\nבחר אימון כדי לראות את כל הנתונים 👇",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+async def on_activity_types_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        counts = activity_type_counts(session, user.id) if user else []
+
+    rows = [
+        [InlineKeyboardButton(f"{type_label(t)} ({n})", callback_data=f"acttype:{t}")]
+        for t, n in counts
+    ]
+    await query.edit_message_text(
+        "🏃 בחר סוג אימון 👇", reply_markup=InlineKeyboardMarkup(rows)
+    )
+
+
+async def on_activity_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Third level: everything Garmin recorded for one workout."""
+    query = update.callback_query
+    await query.answer()
+    activity_id = int(query.data.split(":", 1)[1])
+
+    with Session(engine) as session:
+        activity = session.get(Activity, activity_id)
+        if activity is None:
+            await query.edit_message_text("האימון לא נמצא 🤔")
+            return
+        user = _find_user(session, query.message.chat_id)
+        if user is None or activity.user_id != user.id:
+            # Callback data is client-supplied, so ownership is re-checked
+            # here rather than trusted from the button.
+            await query.edit_message_text("האימון לא נמצא 🤔")
+            return
+        activity_type = activity.activity_type
+        needs_sets = activity_type == "strength_training" and activity.exercise_sets is None
+
+    if needs_sets:
+        await query.edit_message_text("🔄 טוען את פרטי התרגילים…")
+
+        def _load():
+            with Session(engine) as session:
+                activity = session.get(Activity, activity_id)
+                ensure_exercise_sets(session, activity)
+                return format_activity_detail(activity)
+
+        text = await asyncio.to_thread(_load)
+    else:
+        with Session(engine) as session:
+            text = format_activity_detail(session.get(Activity, activity_id))
+
+    back = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ חזרה", callback_data=f"acttype:{activity_type}")]]
+    )
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
+    except BadRequest:
+        await query.edit_message_text(text, reply_markup=back)
+
+
 async def enter_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Explicit opt-in to free typing. Outside this mode typed text isn't sent
@@ -743,7 +864,7 @@ def build_application() -> Application:
         (BTN_HEART, _quick_lookup(format_resting_heart_rate)),
         (BTN_STEPS, _quick_lookup(format_steps_today)),
         (BTN_SLEEP, _quick_lookup(format_sleep)),
-        (BTN_LAST_ACTIVITY, _quick_lookup(format_last_activity)),
+        (BTN_ACTIVITIES, show_activity_types),
         (BTN_RECOVERY, _quick_lookup(format_recovery)),
         (BTN_WEEK, _quick_lookup(format_week)),
         (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
@@ -757,6 +878,11 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
     application.add_handler(CallbackQueryHandler(on_account_action, pattern=r"^account:"))
+    # Ordered narrowest-first: "acttype_menu" would otherwise be swallowed
+    # by the broader "acttype:" pattern.
+    application.add_handler(CallbackQueryHandler(on_activity_types_menu, pattern=r"^acttype_menu$"))
+    application.add_handler(CallbackQueryHandler(on_activity_type, pattern=r"^acttype:"))
+    application.add_handler(CallbackQueryHandler(on_activity_detail, pattern=r"^act:"))
 
     # Typed text - answered by the coach only while in chat mode, otherwise
     # pointed back at the buttons.

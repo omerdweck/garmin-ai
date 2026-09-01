@@ -18,6 +18,7 @@ from app.core.garmin_client import (
     Garmin,
     get_activities,
     get_daily_summary,
+    get_exercise_sets,
     get_hrv_data,
     get_max_metrics,
     get_sleep_data,
@@ -127,6 +128,36 @@ def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, lim
                 raw_json=raw_activity,
             )
         )
+
+
+def ensure_exercise_sets(session: Session, activity: Activity) -> Activity:
+    """
+    Lazily fills in the per-set exercise breakdown for a strength workout.
+
+    Not done during sync: it's one extra Garmin request per activity, and
+    most workouts are never opened in detail - fetching 30 of them on
+    every backfill would spend rate-limit budget on data nobody looks at.
+    Cached permanently once fetched, since a completed workout's sets
+    can't change. A failure here is non-fatal: the caller still shows
+    everything else about the workout.
+    """
+    if activity.exercise_sets is not None or activity.activity_type != "strength_training":
+        return activity
+
+    account = session.exec(select(GarminAccount).where(GarminAccount.user_id == activity.user_id)).first()
+    if account is None:
+        return activity
+
+    try:
+        garmin_session = resume_garmin_session(decrypt(account.encrypted_token))
+        activity.exercise_sets = get_exercise_sets(garmin_session, activity.garmin_activity_id)
+        session.add(activity)
+        session.commit()
+        session.refresh(activity)
+    except (GarminAuthError, GarminRateLimitError):
+        pass
+
+    return activity
 
 
 def sync_user_garmin_data(

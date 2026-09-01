@@ -43,4 +43,11 @@ class Activity(SQLModel, table=True):
 
     raw_json: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
 
+    # Per-set breakdown for strength workouts (exercise category, reps,
+    # weight). Comes from a separate Garmin endpoint, so it's fetched
+    # lazily the first time someone actually opens that workout rather
+    # than for every activity during sync - and cached here afterwards,
+    # since a finished workout's sets never change.
+    exercise_sets: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
