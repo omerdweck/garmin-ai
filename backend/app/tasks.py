@@ -13,7 +13,12 @@ from zoneinfo import ZoneInfo
 from sqlmodel import Session, select
 
 from app.celery_app import celery_app
-from app.core.claude_client import ClaudeNotConfiguredError, generate_daily_summary
+from app.core.claude_client import (
+    ClaudeAuthError,
+    ClaudeNotConfiguredError,
+    ClaudeOutOfCreditError,
+    generate_daily_summary,
+)
 from app.core.config import settings
 from app.core.garmin_client import GarminAuthError, GarminRateLimitError
 from app.core.telegram_client import send_telegram_message
@@ -161,10 +166,11 @@ def send_daily_summary_task(self, user_id: int) -> None:
 
         try:
             summary = generate_daily_summary(session, user)
-        except ClaudeNotConfiguredError:
-            # A missing API key is a deployment problem, not a transient
-            # one - retrying just burns queue slots until it gives up.
-            logger.warning("Daily summary skipped for user %s - Claude is not configured", user_id)
+        except (ClaudeNotConfiguredError, ClaudeAuthError, ClaudeOutOfCreditError) as exc:
+            # None of these get better by trying again: a missing or
+            # rejected key and an empty credit balance all need a human.
+            # Retrying just burns queue slots until it gives up.
+            logger.warning("Daily summary skipped for user %s - %s", user_id, type(exc).__name__)
             return
         except Exception as exc:
             logger.exception("Daily summary generation failed for user %s", user_id)

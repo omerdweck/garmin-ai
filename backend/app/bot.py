@@ -49,7 +49,13 @@ from app.bot_texts import (
     TERMS_DECLINED,
     WELCOME,
 )
-from app.core.claude_client import ClaudeNotConfiguredError, chat_with_coach
+from app.core.claude_client import (
+    ClaudeAuthError,
+    ClaudeNotConfiguredError,
+    ClaudeOutOfCreditError,
+    ClaudeUnavailableError,
+    chat_with_coach,
+)
 from app.core.config import settings
 from app.core.crypto import encrypt
 from app.core.garmin_client import GarminAuthError, GarminRateLimitError, login_to_garmin
@@ -783,6 +789,27 @@ async def on_account_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # --------------------------------------------------------------------------
 
 
+async def _keep_typing(chat) -> None:
+    """
+    Holds the "typing…" indicator up for as long as the caller needs.
+
+    Telegram expires a chat action after roughly five seconds, so showing
+    it for the length of a real answer means re-sending it on a timer.
+    Cancelled by the caller once the reply is ready; a failure to send
+    (network blip) must never take down the answer itself, so it's
+    swallowed.
+    """
+    try:
+        while True:
+            try:
+                await chat.send_action(ChatAction.TYPING)
+            except Exception:
+                logger.debug("typing indicator failed", exc_info=True)
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+
+
 async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handles typed text. Only acts when the user has explicitly entered chat
@@ -812,10 +839,6 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    # Typing indicator - the Claude round-trip with tool calls takes a few
-    # seconds, and silence reads as "broken".
-    await update.effective_chat.send_action(ChatAction.TYPING)
-
     def _run() -> str:
         # A fresh session inside the worker thread: SQLModel/SQLAlchemy
         # sessions are not safe to share across threads.
@@ -823,18 +846,57 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             user = _find_user(session, chat_id)
             return chat_with_coach(session, user, update.message.text)
 
+    # Typing runs for as long as the answer takes. A single send_action
+    # only holds the indicator for about five seconds, and a tool-using
+    # answer regularly takes far longer - so one call left the user
+    # staring at silence, which is exactly what "is this thing broken?"
+    # feels like.
+    typing = asyncio.create_task(_keep_typing(update.effective_chat))
     try:
         reply = await asyncio.to_thread(_run)
     except ClaudeNotConfiguredError:
         context.user_data[CHAT_MODE_KEY] = False
         await update.message.reply_text(
-            "🤖 המאמן החכם עדיין לא מחובר (חסר מפתח API).", reply_markup=MAIN_KEYBOARD
+            "🤖 *המאמן לא מחובר*\n\nחסר מפתח API. שאר הכפתורים עובדים כרגיל.",
+            parse_mode="Markdown",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+    except ClaudeOutOfCreditError:
+        logger.error("Anthropic credit exhausted (chat_id %s)", chat_id)
+        await update.message.reply_text(
+            "💳 *נגמר האשראי במנוי ה-AI*\n\n"
+            "אני לא יכול לענות עד שתיטען יתרה בחשבון Anthropic.\n"
+            "בינתיים כל שאר הכפתורים עובדים - הנתונים שלך זמינים כרגיל.",
+            parse_mode="Markdown",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+    except ClaudeAuthError:
+        logger.error("Anthropic key rejected (chat_id %s)", chat_id)
+        await update.message.reply_text(
+            "🔑 *מפתח ה-AI נדחה*\n\n"
+            "ייתכן שהמפתח בוטל או הוחלף. צריך לעדכן אותו בהגדרות המערכת.\n"
+            "שאר הכפתורים עובדים כרגיל.",
+            parse_mode="Markdown",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+    except ClaudeUnavailableError:
+        logger.warning("Anthropic temporarily unavailable (chat_id %s)", chat_id)
+        await update.message.reply_text(
+            "📡 *שירות ה-AI לא זמין כרגע*\n\nזו תקלה זמנית - נסה שוב בעוד דקה.",
+            parse_mode="Markdown",
         )
         return
     except Exception:
         logger.exception("Coach chat failed for chat_id %s", chat_id)
         await update.message.reply_text("משהו השתבש אצלי 😕 נסה שוב בעוד רגע.")
         return
+    finally:
+        # Always stop the indicator, including on every error path above -
+        # otherwise it keeps typing forever after a failure.
+        typing.cancel()
 
     # Keep the exit button on screen so the way out stays visible for as
     # long as the conversation runs.

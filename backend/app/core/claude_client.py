@@ -46,10 +46,56 @@ class ClaudeNotConfiguredError(RuntimeError):
     """Raised when the coach is used before ANTHROPIC_API_KEY is set."""
 
 
+class ClaudeOutOfCreditError(RuntimeError):
+    """Raised when the Anthropic account has no credit left."""
+
+
+class ClaudeAuthError(RuntimeError):
+    """Raised when the API key is rejected - wrong, revoked or expired."""
+
+
+class ClaudeUnavailableError(RuntimeError):
+    """Raised for transient problems: network, rate limits, Anthropic outages."""
+
+
 def _client() -> anthropic.Anthropic:
     if not settings.is_claude_configured:
         raise ClaudeNotConfiguredError("ANTHROPIC_API_KEY is not set")
     return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+
+def _call_claude(client: anthropic.Anthropic, **kwargs):
+    """
+    Single place where the API is actually called, so every failure mode
+    gets classified once instead of surfacing to the user as one generic
+    "something went wrong".
+
+    The distinction matters because the fixes are completely different:
+    out of credit is something the *owner* has to top up, a bad key is a
+    deployment problem, and a network blip just needs retrying. Telling
+    the user which one it is saves them guessing.
+    """
+    try:
+        return client.messages.create(**kwargs)
+    except anthropic.AuthenticationError as exc:
+        raise ClaudeAuthError(str(exc)) from exc
+    except anthropic.PermissionDeniedError as exc:
+        raise ClaudeAuthError(str(exc)) from exc
+    except anthropic.BadRequestError as exc:
+        # Credit exhaustion arrives as a 400, not a dedicated exception
+        # type - the message is the only thing distinguishing it from a
+        # genuinely malformed request.
+        if "credit balance" in str(exc).lower():
+            raise ClaudeOutOfCreditError(str(exc)) from exc
+        raise
+    except anthropic.RateLimitError as exc:
+        raise ClaudeUnavailableError(str(exc)) from exc
+    except anthropic.APIConnectionError as exc:
+        raise ClaudeUnavailableError(str(exc)) from exc
+    except anthropic.APIStatusError as exc:
+        if exc.status_code >= 500:
+            raise ClaudeUnavailableError(str(exc)) from exc
+        raise
 
 
 # --------------------------------------------------------------------------
@@ -247,7 +293,8 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> str:
 
     response = None
     for _ in range(MAX_TOOL_ROUNDS):
-        response = client.messages.create(
+        response = _call_claude(
+            client,
             model=settings.claude_model,
             max_tokens=2000,
             system=[
@@ -319,7 +366,8 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
         "recent_activities": activities,
     }
 
-    response = client.messages.create(
+    response = _call_claude(
+        client,
         model=settings.claude_model,
         max_tokens=600,
         system=[
