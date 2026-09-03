@@ -6,16 +6,42 @@ SQLModel so we never accidentally leak internal fields (hashed_password)
 or accept fields we don't want (id, is_admin) directly from a client.
 """
 
-from pydantic import BaseModel, EmailStr
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, EmailStr
+
+
+def _normalize_email(value: str) -> str:
+    """
+    Lower-cases the whole address so one person can't end up as two users.
+
+    EmailStr already lower-cases the domain, but leaves the local part
+    alone - so "Omer.Dweck@Gmail.com" arrives as "Omer.Dweck@gmail.com"
+    and compares unequal to "omer.dweck@gmail.com". That matters because
+    phone keyboards auto-capitalise the first letter, so the same person
+    typing their address on a phone and on a laptop would register twice
+    and then fail to log in with the "wrong" casing. The unique index
+    wouldn't catch it either - to Postgres they're different strings.
+
+    Technically RFC 5321 allows the local part to be case-sensitive, but
+    no mail provider in practice treats it that way, and matching real
+    user behaviour beats matching the spec here.
+    """
+    return value.strip().lower()
+
+
+# Applied at the schema boundary rather than in each endpoint, so no future
+# route can forget to normalise before querying by email.
+NormalizedEmail = Annotated[EmailStr, AfterValidator(_normalize_email)]
 
 
 class UserRegister(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str
 
 

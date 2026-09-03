@@ -326,7 +326,11 @@ async def on_terms_response(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Held only in memory for the next message; never written to the DB
     # unless the login actually succeeds.
-    context.user_data["garmin_email"] = update.message.text.strip()
+    # Lower-cased because phone keyboards auto-capitalise the first letter,
+    # and the user shouldn't have to notice. Nothing here depends on the
+    # original casing: this address is only ever sent to Garmin's login and
+    # is never stored (the bot identifies people by telegram_chat_id).
+    context.user_data["garmin_email"] = update.message.text.strip().lower()
     await update.message.reply_text(ASK_PASSWORD_TEXT, parse_mode="Markdown")
     return ASK_PASSWORD
 
