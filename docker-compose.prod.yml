@@ -1,0 +1,86 @@
+# Production stack. Run with:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# A separate file rather than an override of docker-compose.yml, because
+# the differences are removals (bind mounts, published ports, --reload)
+# and Compose overrides can only add to those keys, never take them away.
+#
+# What differs from the development file, and why:
+#   - no bind mount of ./backend: the image carries the code, so what runs
+#     is exactly what was built and can't drift with whatever happens to be
+#     on the server's disk
+#   - no --reload: a file watcher restarting the app in production turns a
+#     half-finished deploy into an outage
+#   - the API binds to 127.0.0.1 only: it's reachable from the server
+#     itself for health checks, and from nowhere else. The website is
+#     paused, so nothing needs it from outside
+#   - db and redis publish nothing at all, same as in development
+
+services:
+  api:
+    restart: unless-stopped
+    build: ./backend
+    # 127.0.0.1 prefix is the whole point - "8000:8000" would bind 0.0.0.0
+    # and put the API on the public internet.
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    restart: unless-stopped
+    build: ./backend
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: celery -A app.celery_app worker --loglevel=info
+
+  beat:
+    restart: unless-stopped
+    build: ./backend
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: celery -A app.celery_app beat --loglevel=info
+
+  bot:
+    restart: unless-stopped
+    build: ./backend
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    command: python -m app.bot
+
+  db:
+    restart: unless-stopped
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - garmin_ai_pgdata:/var/lib/postgresql/data
+    # Health data - worth knowing the DB is actually accepting connections
+    # before the app services start hammering it on boot.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    restart: unless-stopped
+    image: redis:7
+
+volumes:
+  garmin_ai_pgdata:
