@@ -34,10 +34,20 @@ class Settings(BaseSettings):
 
     # SMTP - required, no defaults: without real credentials nothing should
     # silently pretend an email was sent when it wasn't.
+    # Optional, unlike the credentials above. Email is only ever sent by the
+    # website's registration flow (POST /auth/register); the Telegram bot
+    # identifies people by chat id and sends no mail at all. Requiring these
+    # would force a bot-only deployment to carry a mail-sending credential
+    # that nothing there can use - and every unused secret on a public
+    # server is blast radius for no benefit.
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
-    smtp_username: str
-    smtp_app_password: str
+    smtp_username: Optional[str] = None
+    smtp_app_password: Optional[str] = None
+
+    @property
+    def is_email_configured(self) -> bool:
+        return bool(self.smtp_username and self.smtp_app_password)
     # The address recipients see as the sender - distinct from smtp_username,
     # which is just the SMTP auth credential (e.g. Resend's username is the
     # literal string "resend", not a real mailbox). "onboarding@resend.dev"

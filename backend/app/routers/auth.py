@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.api.deps import get_current_user
-from app.core.email import send_verification_email
+from app.core.email import EmailNotConfiguredError, send_verification_email
 from app.core.security import create_access_token, generate_verification_token, hash_password, verify_password
 from app.db.session import get_session
 from app.models.user import User
@@ -38,7 +38,19 @@ def register(data: UserRegister, session: Session = Depends(get_session)) -> Use
     session.commit()
     session.refresh(user)
 
-    send_verification_email(to=user.email, token=token)
+    try:
+        send_verification_email(to=user.email, token=token)
+    except EmailNotConfiguredError:
+        # Deployments that only run the Telegram bot carry no mail
+        # credentials by design. Say so, instead of returning a 500 that
+        # looks like a crash - and roll the user back, since an account
+        # that can never receive its verification link is unusable.
+        session.delete(user)
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email sending is not configured on this deployment",
+        )
 
     return user
 

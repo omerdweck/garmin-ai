@@ -11,7 +11,17 @@ from email.message import EmailMessage
 from app.core.config import settings
 
 
+class EmailNotConfiguredError(RuntimeError):
+    """Raised when email is sent from a deployment that has no SMTP credentials."""
+
+
 def send_email(to: str, subject: str, body: str) -> None:
+    if not settings.is_email_configured:
+        # Explicit failure rather than a confusing SMTP error about a None
+        # username. Bot-only deployments intentionally have no mail
+        # credentials, so this is a reachable state, not a bug.
+        raise EmailNotConfiguredError("SMTP credentials are not configured")
+
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = settings.smtp_from_email
