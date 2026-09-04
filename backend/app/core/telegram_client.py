@@ -15,6 +15,13 @@ from telegram.error import BadRequest
 
 from app.core.config import settings
 
+# Same reason as in app/bot.py: python-telegram-bot talks to
+# api.telegram.org/bot<TOKEN>/... over httpx, and httpx logs whole URLs at
+# INFO - so the bot token lands in the worker and beat logs too. Set here,
+# at import of the module that actually makes those calls, so every
+# entrypoint that can send a message is covered.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

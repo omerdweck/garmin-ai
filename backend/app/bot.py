@@ -92,6 +92,14 @@ from app.services.metrics_view import (
 from app.tasks import backfill_user_history_task, sync_one_user_task
 
 logging.basicConfig(level=logging.INFO)
+
+# httpx logs every request at INFO with the full URL - and Telegram puts the
+# bot token *inside* the URL path (api.telegram.org/bot<TOKEN>/getMe). At the
+# polling rate that writes the token to disk continuously, so anyone who can
+# read the container logs owns the bot. WARNING keeps genuine transport
+# failures visible while dropping the per-request lines that carry the token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(3)
