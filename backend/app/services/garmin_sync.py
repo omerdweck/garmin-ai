@@ -9,6 +9,7 @@ import time
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.crypto import decrypt
@@ -33,12 +34,26 @@ def _seconds_to_minutes(seconds) -> int | None:
     return seconds // 60 if seconds is not None else None
 
 
-def _sync_daily_metric(session: Session, user_id: int, garmin_session: Garmin, target_date: date_type) -> None:
-    date_str = target_date.isoformat()
-    summary = get_daily_summary(garmin_session, date_str)
-    sleep = get_sleep_data(garmin_session, date_str)
-    hrv = get_hrv_data(garmin_session, date_str)
-    max_metrics = get_max_metrics(garmin_session, date_str)
+def _fetch_daily_payload(garmin_session: Garmin, date_str: str) -> dict:
+    """
+    Every Garmin call for one day, and nothing else. Split out from the
+    database write so a write that has to be retried (see _upsert_daily_metric)
+    can reuse what was already fetched instead of spending four more requests
+    against an API that rate-limits by IP.
+    """
+    return {
+        "summary": get_daily_summary(garmin_session, date_str),
+        "sleep": get_sleep_data(garmin_session, date_str),
+        "hrv": get_hrv_data(garmin_session, date_str),
+        "max_metrics": get_max_metrics(garmin_session, date_str),
+    }
+
+
+def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, payload: dict) -> None:
+    summary = payload["summary"]
+    sleep = payload["sleep"]
+    hrv = payload["hrv"]
+    max_metrics = payload["max_metrics"]
 
     sleep_dto = sleep.get("dailySleepDTO") or {}
     hrv_summary = hrv.get("hrvSummary") or {}
@@ -90,6 +105,29 @@ def _sync_daily_metric(session: Session, user_id: int, garmin_session: Garmin, t
     session.add(metric)
 
 
+def _upsert_daily_metric(session: Session, user_id: int, target_date: date_type, payload: dict) -> None:
+    """
+    Write one day, committing it on its own.
+
+    Per-day commits rather than one transaction for the whole range: a
+    30-day backfill that fails on day 25 used to roll back all 24 days that
+    had already succeeded, so a single bad day cost the entire month.
+
+    The IntegrityError branch handles two syncs writing the same day at once.
+    That is a normal situation, not a corner case - linking an account fires
+    a quick 2-day sync *and* a 30-day backfill on purpose, and the scheduled
+    run can overlap a manual one. Whoever commits second re-reads the row the
+    winner wrote and updates it, reusing the already-fetched payload.
+    """
+    _apply_daily_metric(session, user_id, target_date, payload)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        _apply_daily_metric(session, user_id, target_date, payload)
+        session.commit()
+
+
 def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, limit: int = 20) -> None:
     for raw_activity in get_activities(garmin_session, 0, limit):
         garmin_activity_id = raw_activity.get("activityId")
@@ -128,6 +166,17 @@ def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, lim
                 raw_json=raw_activity,
             )
         )
+
+        # Commit each activity on its own, for the same reason the daily
+        # metrics do: the "already synced?" check above can be overtaken by a
+        # concurrent sync between the read and the write. Losing that race is
+        # harmless - activities never change after being recorded, so the row
+        # the winner wrote is the row we wanted - but it must not abort the
+        # rest of the batch, which is what one shared transaction did.
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
 
 
 def ensure_exercise_sets(session: Session, activity: Activity) -> Activity:
@@ -188,7 +237,8 @@ def sync_user_garmin_data(
 
         for days_ago in range(days_back):
             target_date = date_type.today() - timedelta(days=days_ago)
-            _sync_daily_metric(session, user_id, garmin_session, target_date)
+            payload = _fetch_daily_payload(garmin_session, target_date.isoformat())
+            _upsert_daily_metric(session, user_id, target_date, payload)
             if pause_seconds:
                 time.sleep(pause_seconds)
 
