@@ -10,6 +10,7 @@ All text here is Hebrew, since it's user-facing bot output (unlike code
 comments, which stay English).
 """
 
+import re
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -362,8 +363,6 @@ READINESS_LABELS = {
 
 TRAINING_STATUS_LABELS = {
     "RECOVERY": "התאוששות",
-    "RECOVERY_1": "התאוששות",
-    "RECOVERY_2": "התאוששות",
     "MAINTAINING": "שמירה על הכושר",
     "PRODUCTIVE": "מתקדם",
     "PEAKING": "בשיא",
@@ -373,6 +372,56 @@ TRAINING_STATUS_LABELS = {
     "STRAINED": "מאומץ",
     "NO_STATUS": "אין נתון",
 }
+
+LOAD_BALANCE_LABELS = {
+    "BALANCED": "מאוזן",
+    "AEROBIC_LOW_SHORTAGE": "חסרים אימונים אירוביים קלים",
+    "AEROBIC_HIGH_SHORTAGE": "חסרים אימונים אירוביים בעצימות גבוהה",
+    "ANAEROBIC_SHORTAGE": "חסרים אימונים אנאירוביים",
+    "AEROBIC_LOW_EXCESS": "עודף אימונים אירוביים קלים",
+    "AEROBIC_HIGH_EXCESS": "עודף אימונים אירוביים בעצימות גבוהה",
+    "ANAEROBIC_EXCESS": "עודף אימונים אנאירוביים",
+    "NO_STATUS": "אין נתון",
+}
+
+
+def _label_for(phrase: Optional[str], labels: dict) -> Optional[str]:
+    """
+    Garmin suffixes several of these constants with a severity number -
+    RECOVERY_1, RECOVERY_2, MAINTAINING_2 - which carries no meaning worth
+    showing a user but does mean an exact-match lookup misses. Strip a
+    trailing _<digits> before looking up, and fall through to the raw
+    constant when nothing matches, so an unmapped phrase is visible as
+    something to add rather than silently dropped.
+    """
+    if not phrase:
+        return None
+    base = re.sub(r"_\d+$", "", phrase)
+    return labels.get(base, labels.get(phrase, phrase))
+
+
+def _humanize_duration(minutes: int) -> str:
+    """
+    A forward-looking duration ("rest for this long"), rounded to the nearest
+    hour rather than floored. Flooring turned 174 minutes into "2 שעות" and
+    lost nearly an hour of the advice.
+    """
+    if minutes < 60:
+        return f"{minutes} דקות"
+    # Hours up to 48, matching _humanize_age above and for the same reason:
+    # a 35-hour recovery rendered as "יום" hides ten hours of it, and this
+    # number is advice the user acts on.
+    if minutes < 48 * 60:
+        hours = round(minutes / 60)
+        if hours == 1:
+            return "שעה"
+        if hours == 2:
+            return "שעתיים"
+        return f"{hours} שעות"
+    days = round(minutes / (24 * 60))
+    if days == 2:
+        return "יומיים"
+    return f"{days} ימים"
 
 
 def _training_load_lines(metrics: list[DailyMetric]) -> list[str]:
@@ -397,20 +446,24 @@ def _training_load_lines(metrics: list[DailyMetric]) -> list[str]:
         lines.append(_rtl(f"📈 השבוע — *{acute}* מול בסיס *{chronic}* · {verdict}"))
 
     status, _ = _latest_value(metrics, "training_status")
-    if status:
-        lines.append(_rtl(f"🎯 מצב אימון — *{TRAINING_STATUS_LABELS.get(status, status)}*"))
+    status_label = _label_for(status, TRAINING_STATUS_LABELS)
+    if status_label:
+        lines.append(_rtl(f"🎯 מצב אימון — *{status_label}*"))
+
+    balance, _ = _latest_value(metrics, "load_balance")
+    balance_label = _label_for(balance, LOAD_BALANCE_LABELS)
+    if balance_label:
+        lines.append(_rtl(f"⚖️ איזון עומסים — *{balance_label}*"))
 
     score, _ = _latest_value(metrics, "training_readiness_score")
     if score is not None:
         level, _ = _latest_value(metrics, "training_readiness_level")
-        label = f" · {READINESS_LABELS.get(level, level)}" if level else ""
+        label = f" · {_label_for(level, READINESS_LABELS)}" if level else ""
         lines.append(_rtl(f"⚡ מוכנות לאימון — *{score}/100*{label}"))
 
     recovery, _ = _latest_value(metrics, "recovery_time_minutes")
     if recovery:
-        hours = recovery // 60
-        text = f"{hours} שעות" if hours >= 2 else ("שעה" if hours == 1 else f"{recovery} דקות")
-        lines.append(_rtl(f"🛌 זמן התאוששות מומלץ — *{text}*"))
+        lines.append(_rtl(f"🛌 זמן התאוששות מומלץ — *{_humanize_duration(recovery)}*"))
 
     return lines
 
