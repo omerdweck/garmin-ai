@@ -69,6 +69,11 @@ from app.services.admin_view import (
     format_new_user_alert,
     set_user_limit,
 )
+from app.services.signup_control import (
+    MAX_INVITE_ATTEMPTS,
+    invite_code_matches,
+    rejection_reason,
+)
 from app.services.usage_limits import QuotaExceeded, check_quota
 from app.services.activity_view import (
     activity_type_counts,
@@ -109,7 +114,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(3)
+ASK_INVITE, AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(4)
+
+# Counts wrong invite codes within one conversation. In user_data, so it
+# resets if the bot restarts - acceptable, because the real ceiling on
+# guessing is that a wrong code reveals nothing and the cap still applies.
+INVITE_ATTEMPTS_KEY = "invite_attempts"
 
 # Terms acceptance timestamp, held in memory across the onboarding
 # conversation and written to the User row only once linking succeeds -
@@ -301,10 +311,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=ReplyKeyboardRemove(),
         )
     else:
+        # AccountState.UNKNOWN - a genuinely new person, and the only path
+        # that creates a user. Both gates apply here and nowhere else:
+        # someone already registered must never be locked out by a code
+        # change or a lowered cap.
+        with Session(engine) as session:
+            refusal = rejection_reason(session)
+        if refusal is not None:
+            await update.message.reply_text(refusal, reply_markup=ReplyKeyboardRemove())
+            return ConversationHandler.END
+
+        if settings.is_invite_required:
+            context.user_data[INVITE_ATTEMPTS_KEY] = 0
+            await update.message.reply_text(
+                "🔒 *הבוט הזה בהזמנה בלבד*\n\nשלח את קוד ההזמנה שקיבלת:",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return ASK_INVITE
+
         await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
 
     await update.effective_chat.send_message(TERMS, parse_mode="Markdown", reply_markup=_terms_keyboard())
     return AWAITING_TERMS
+
+
+async def on_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Checks the invite code, then hands over to the terms exactly as an open
+    signup would - the gate adds a step, it does not change what follows.
+    """
+    chat_id = update.effective_chat.id
+
+    if invite_code_matches(update.message.text or ""):
+        logger.info("Invite code accepted for chat %s", chat_id)
+        await update.message.reply_text(WELCOME, parse_mode="Markdown")
+        await update.effective_chat.send_message(
+            TERMS, parse_mode="Markdown", reply_markup=_terms_keyboard()
+        )
+        return AWAITING_TERMS
+
+    attempts = context.user_data.get(INVITE_ATTEMPTS_KEY, 0) + 1
+    context.user_data[INVITE_ATTEMPTS_KEY] = attempts
+    logger.warning("Wrong invite code from chat %s (attempt %s)", chat_id, attempts)
+
+    if attempts >= MAX_INVITE_ATTEMPTS:
+        # Ending the conversation is the whole point: without a ceiling, a
+        # short code is guessable at machine speed and the gate is decoration.
+        await update.message.reply_text("❌ יותר מדי ניסיונות. פנה למי שהזמין אותך.")
+        return ConversationHandler.END
+
+    # Says nothing about how wrong the code was - no "close", no length hint.
+    await update.message.reply_text(
+        f"❌ קוד שגוי. נותרו {MAX_INVITE_ATTEMPTS - attempts} ניסיונות."
+    )
+    return ASK_INVITE
 
 
 async def on_terms_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1012,6 +1073,7 @@ def build_application() -> Application:
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            ASK_INVITE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_invite_code)],
             # Only the inline buttons advance from here - typed text is
             # ignored until the terms are answered one way or the other.
             AWAITING_TERMS: [CallbackQueryHandler(on_terms_response, pattern=r"^terms:")],

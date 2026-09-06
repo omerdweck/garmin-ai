@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.models.garmin_account import GarminAccount
 from app.models.usage_event import UsageEvent
 from app.models.user import User
+from app.services.signup_control import signup_status
 from app.services.usage_limits import usage_report
 
 RLM = "‏"
@@ -37,14 +38,31 @@ def format_admin_summary(session: Session) -> str:
         .where(GarminAccount.disconnected_at.is_(None))
     ).one()
 
+    signup = signup_status(session)
+
     month = datetime.now(timezone.utc).strftime("%m/%Y")
     lines = [
         _rtl(f"📊 *ניהול - {month}*"),
         "",
-        _rtl(f"משתמשים רשומים: *{len(rows)}*"),
+        _rtl(f"משתמשים: *{signup['users']}/{signup['max_users']}*"),
         _rtl(f"מחוברים לגרמין: *{linked}*"),
         _rtl(f"עלות החודש: *${total_cost:.2f}*"),
         _rtl(f"מודל: {settings.claude_model}"),
+        "",
+    ]
+
+    # An open front door has to be visible. The invite code is optional so a
+    # fresh deployment can onboard its own owner, which means "no code set"
+    # is a reachable state - and one nobody would otherwise notice until a
+    # stranger showed up in the user list.
+    if signup["invite_required"]:
+        lines.append(_rtl("🔒 הרשמה: בקוד הזמנה"))
+    else:
+        lines.append(_rtl("⚠️ *הרשמה פתוחה לכל* - הגדר INVITE_CODE"))
+    if signup["full"]:
+        lines.append(_rtl("🚧 מלא - הרשמות חדשות נחסמות"))
+
+    lines += [
         "",
         _rtl(f"מכסות: {settings.daily_message_limit} הודעות ליום, ${settings.monthly_cost_limit_usd:.2f} לחודש"),
     ]

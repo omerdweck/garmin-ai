@@ -108,6 +108,23 @@ class Settings(BaseSettings):
     def is_admin_configured(self) -> bool:
         return self.admin_chat_id is not None
 
+    # --- Who may register ------------------------------------------------
+    # Optional rather than required, so an unconfigured deployment still
+    # onboards its own owner instead of locking everyone out on first run.
+    # That does mean the default is open, which is only safe because the
+    # cap below is not - and because the admin summary reports an open door
+    # rather than letting it pass unnoticed.
+    invite_code: Optional[str] = None
+
+    # The backstop for when the code leaks - and a code shared in a group
+    # chat eventually does. Counts existing users too: lowering it stops new
+    # signups, it never removes anyone.
+    max_users: int = 10
+
+    @property
+    def is_invite_required(self) -> bool:
+        return bool(self.invite_code)
+
     @property
     def database_url(self) -> str:
         return (
