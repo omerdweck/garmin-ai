@@ -35,3 +35,20 @@ class GarminAccount(SQLModel, table=True):
     # surface "which users' Garmin sync is failing" per the architecture doc
     last_sync_at: Optional[datetime] = Field(default=None)
     last_sync_error: Optional[str] = Field(default=None)
+
+    # When the user's watch last uploaded to Garmin Connect - distinct from
+    # last_sync_at above, which is when *we* last pulled from Garmin. The two
+    # answer different questions, and confusing them is exactly what makes a
+    # stale-data complaint hard to diagnose: our sync can succeed perfectly
+    # and still return nothing new, because Garmin only holds what the watch
+    # has uploaded. Stored so the value can be shown without re-querying
+    # Garmin on every message.
+    watch_last_upload_at: Optional[datetime] = Field(default=None)
+
+    # When we last told this user their watch looks stale. Compared against
+    # watch_last_upload_at rather than against "now": the scheduled sync runs
+    # twice a day, so warning on every stale run would mean fourteen
+    # identical nags for one forgotten week. Once the watch uploads again,
+    # watch_last_upload_at moves past this timestamp and a later staleness
+    # is treated as a new episode worth one new warning.
+    watch_stale_notified_at: Optional[datetime] = Field(default=None)

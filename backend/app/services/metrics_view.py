@@ -11,14 +11,21 @@ comments, which stay English).
 """
 
 from datetime import date as date_type
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlmodel import Session, col, select
 
 from app.models.activity import Activity
 from app.models.daily_metric import DailyMetric
+from app.models.garmin_account import GarminAccount
 from app.models.user import User
+
+# Above this age, the watch itself is the reason the data looks stale - not
+# our sync - so the user is told to sync the watch before anything else.
+# 12 hours is deliberately forgiving: a watch synced last night still covers
+# this morning's sleep, which is the metric people check first.
+WATCH_STALE_HOURS = 12
 
 # How far back to look for a metric that isn't recorded every day - a watch
 # left on the charger leaves gaps in everything.
@@ -63,6 +70,68 @@ RLM = "‏"
 
 def _rtl(text: str) -> str:
     return f"{RLM}{text}"
+
+
+def _humanize_age(delta: timedelta) -> str:
+    """'לפני 3 שעות' / 'לפני יומיים' - Hebrew needs the dual form for 2."""
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 2:
+        return "ממש עכשיו"
+    if minutes < 60:
+        return f"לפני {minutes} דקות"
+    hours = minutes // 60
+    if hours == 1:
+        return "לפני שעה"
+    if hours == 2:
+        return "לפני שעתיים"
+    # Hours all the way to 48, not 24: this line exists to justify a stale
+    # watch, and "לפני 41 שעות" is both more actionable and more honest than
+    # rounding that down to a single day. "אתמול" is avoided entirely - it is
+    # a calendar word being asked to describe an elapsed duration, and at 41
+    # hours it reads as roughly half the real gap.
+    if hours < 48:
+        return f"לפני {hours} שעות"
+    days = hours // 24
+    if days == 2:
+        return "לפני יומיים"
+    return f"לפני {days} ימים"
+
+
+def format_watch_sync_line(session: Session, user_id: int) -> str:
+    """
+    The header every sync report opens with: when the *watch* last uploaded
+    to Garmin, and a warning when that was long enough ago to explain missing
+    data.
+
+    This exists because "the bot didn't update" and "the watch didn't upload"
+    look identical from the user's side, and only the second one is something
+    they can fix. Without this line the honest answer - our sync worked, there
+    was simply nothing new on Garmin's side - is invisible.
+
+    Returns "" when we have never recorded an upload time, rather than
+    guessing or showing a confusing placeholder.
+    """
+    account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user_id)).first()
+    if account is None or account.watch_last_upload_at is None:
+        return ""
+
+    stamp = account.watch_last_upload_at
+    # Postgres gives these back naive; they were stored as UTC.
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+
+    age = datetime.now(timezone.utc) - stamp
+    when = _humanize_age(age)
+
+    if age >= timedelta(hours=WATCH_STALE_HOURS):
+        return (
+            _rtl(f"⚠️ *השעון סונכרן {when}*")
+            + "\n"
+            + _rtl("פתח את אפליקציית Garmin Connect כדי לסנכרן את השעון, ואז לחץ סנכרון כאן שוב.")
+            + "\n\n"
+        )
+
+    return _rtl(f"⌚ השעון סונכרן {when}") + "\n\n"
 
 
 def _format_minutes(minutes: Optional[int]) -> Optional[str]:

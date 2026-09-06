@@ -23,6 +23,7 @@ from app.core.garmin_client import (
     get_hrv_data,
     get_max_metrics,
     get_sleep_data,
+    get_watch_last_upload,
     resume_garmin_session,
 )
 from app.models.activity import Activity
@@ -234,6 +235,16 @@ def sync_user_garmin_data(
 
     try:
         garmin_session = resume_garmin_session(decrypt(account.encrypted_token))
+
+        # Read this first, before pulling anything: it is what tells the user
+        # whether an empty result means "nothing happened" or "your watch
+        # hasn't uploaded since Tuesday". Committed immediately so the value
+        # is available to the caller's message even if the pull below fails.
+        watch_upload = get_watch_last_upload(garmin_session)
+        if watch_upload is not None:
+            account.watch_last_upload_at = watch_upload
+            session.add(account)
+            session.commit()
 
         for days_ago in range(days_back):
             target_date = date_type.today() - timedelta(days=days_ago)

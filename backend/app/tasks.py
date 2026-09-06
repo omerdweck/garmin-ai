@@ -7,7 +7,7 @@ something Celery can schedule/queue/retry".
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, select
@@ -26,11 +26,48 @@ from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
 from app.services.garmin_sync import sync_user_garmin_data
-from app.services.metrics_view import format_metrics_snapshot
+from app.services.metrics_view import (
+    WATCH_STALE_HOURS,
+    format_metrics_snapshot,
+    format_watch_sync_line,
+)
 
 logger = logging.getLogger(__name__)
 
 LOCAL_TZ = ZoneInfo("Asia/Jerusalem")
+
+
+def _warn_if_watch_stale(session: Session, user: User) -> None:
+    """
+    One warning per staleness episode, sent from the scheduled sync.
+
+    "Episode" rather than "run" is the whole point: the schedule fires twice
+    a day, so a per-run warning would send fourteen identical messages over a
+    forgotten week. Comparing the last warning against the last upload means
+    the counter resets by itself the moment the watch syncs again.
+    """
+    account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user.id)).first()
+    if account is None or account.watch_last_upload_at is None:
+        return
+
+    stamp = account.watch_last_upload_at
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+
+    if datetime.now(timezone.utc) - stamp < timedelta(hours=WATCH_STALE_HOURS):
+        return
+
+    already = account.watch_stale_notified_at
+    if already is not None:
+        if already.tzinfo is None:
+            already = already.replace(tzinfo=timezone.utc)
+        if already > stamp:
+            return  # already warned about this same episode
+
+    send_telegram_message(user.telegram_chat_id, format_watch_sync_line(session, user.id).strip())
+    account.watch_stale_notified_at = datetime.now(timezone.utc)
+    session.add(account)
+    session.commit()
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
@@ -76,19 +113,27 @@ def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> N
                 )
             return
 
-        if not notify_on_success:
-            return
-
         user = session.get(User, user_id)
         if user is None or user.telegram_chat_id is None:
             return
 
+        if not notify_on_success:
+            # Scheduled run: normally silent. The one thing worth an
+            # unprompted message is a watch that hasn't uploaded, because
+            # that is the only cause of stale data the user can actually fix
+            # - and staying quiet leaves them believing the bot is broken.
+            _warn_if_watch_stale(session, user)
+            return
+
         # Send the refreshed numbers rather than a bare "done": the reason
         # to press sync is to see current data, so making the user tap a
-        # second button for it is a pointless extra step.
+        # second button for it is a pointless extra step. The watch line goes
+        # first: if it is stale, it explains everything below it.
         send_telegram_message(
             user.telegram_chat_id,
-            "✅ *הסנכרון הושלם*\n\n" + format_metrics_snapshot(session, user_id),
+            format_watch_sync_line(session, user_id)
+            + "✅ *הסנכרון הושלם*\n\n"
+            + format_metrics_snapshot(session, user_id),
         )
 
 
