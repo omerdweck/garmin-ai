@@ -1,5 +1,11 @@
-# Secrets - never commit to git
+# Secrets - never commit to git.
+# The wildcard matters: only ".env" itself was ignored before, so a backup
+# taken while editing config (.env.bak.20260906, .env.local, .env.prod)
+# was a fully-tracked file holding every credential. .env.example is the
+# one deliberate exception - it carries placeholders, never real values.
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
