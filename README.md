@@ -18,14 +18,27 @@ group — around ten people — on a single small server.
 ## What it does
 
 **Instant lookups** — one tap each, answered straight from the database with
-no AI call: resting heart rate, steps, sleep breakdown, recovery (HRV and
-Body Battery), the week so far, a full metrics snapshot, and a browsable
-workout history with per-exercise muscle groups for strength sessions.
+no AI call: resting heart rate, steps, sleep breakdown, recovery, the week so
+far, a full metrics snapshot, and a browsable workout history with
+per-exercise muscle groups for strength sessions.
+
+**Training load** — Garmin's own acute (7-day) and chronic (28-day) load,
+training status, load balance, readiness score and recommended recovery time.
+Read from Garmin rather than derived from stored activities: an acute:chronic
+ratio computed from durations would be a worse version of a number Garmin
+already produces from sensor data we never see. The ratio is what makes a
+week heavy or light *for that person* — the same 300 is overreaching for one
+user and a taper for another.
 
 **An AI coach** — a real conversation. It calls tools to read the user's
-metrics, workouts, goal and saved training plans, so its answers cite actual
-numbers rather than generalities. It remembers a stated goal ("sub-50 10K by
-December") and the plans it prescribes, across conversations.
+metrics, training load, workouts, goal and saved training plans, so its
+answers cite actual numbers rather than generalities. It remembers a stated
+goal ("sub-50 10K by December") and the plans it prescribes, across
+conversations.
+
+It is not, and does not present itself as, medical advice — the system prompt
+sends anything health-related to a professional rather than reasoning about
+it.
 
 **Automatic syncing** — twice daily, plus a manual button. Every sync reports
 when the *watch* last uploaded to Garmin, and warns when that was long enough
