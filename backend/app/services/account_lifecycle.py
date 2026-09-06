@@ -25,12 +25,18 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, SQLModel, delete, select
+
+# Imported for their side effect on SQLModel.metadata: _user_owned_tables
+# reads the table registry, and a model that no module has imported is not
+# in it - which would silently skip that table on account deletion.
+import app.models  # noqa: F401
 
 from app.models.activity import Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
+from app.models.training_plan import TrainingPlan
 from app.models.user import User
 
 
@@ -95,19 +101,36 @@ def reconnect(session: Session, user_id: int) -> bool:
     return account.last_sync_at is not None and account.last_sync_at.date() == date_type.today()
 
 
+def _user_owned_tables() -> list:
+    """
+    Every table carrying a user_id, ordered children-first.
+
+    Derived from the model metadata rather than hardcoded. The hardcoded
+    version was a standing trap: adding training_plan silently broke account
+    deletion, because there is no ON DELETE CASCADE to fall back on and a
+    forgotten table makes Postgres reject the parent delete outright. The
+    user's "delete my account" button stayed broken until someone pressed it.
+
+    sorted_tables is in dependency order - parents before children - so
+    reversing it is exactly the order a delete has to run in.
+    """
+    return [
+        table
+        for table in reversed(SQLModel.metadata.sorted_tables)
+        if table.name != "user" and "user_id" in table.c
+    ]
+
+
 def delete_user_completely(session: Session, user_id: int) -> None:
     """
     Erases everything we hold about a user, after which they're
     indistinguishable from someone who never used the bot.
 
-    Order matters: every other table carries a foreign key to user.id, so
-    the children have to go before the parent or Postgres rejects the
-    delete.
+    Any future table with a user_id column is picked up automatically - see
+    _user_owned_tables for why that is derived rather than listed by hand.
     """
-    session.exec(delete(ChatMessage).where(ChatMessage.user_id == user_id))
-    session.exec(delete(DailyMetric).where(DailyMetric.user_id == user_id))
-    session.exec(delete(Activity).where(Activity.user_id == user_id))
-    session.exec(delete(GarminAccount).where(GarminAccount.user_id == user_id))
+    for table in _user_owned_tables():
+        session.exec(delete(table).where(table.c.user_id == user_id))
 
     user = session.get(User, user_id)
     if user is not None:
