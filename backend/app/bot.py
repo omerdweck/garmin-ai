@@ -362,9 +362,10 @@ async def on_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
 
     # Says nothing about how wrong the code was - no "close", no length hint.
-    await update.message.reply_text(
-        f"❌ קוד שגוי. נותרו {MAX_INVITE_ATTEMPTS - attempts} ניסיונות."
-    )
+    left = MAX_INVITE_ATTEMPTS - attempts
+    # Hebrew inflects for one: "נותר ניסיון אחד", never "נותרו 1 ניסיונות".
+    remaining = "נותר ניסיון אחד" if left == 1 else f"נותרו {left} ניסיונות"
+    await update.message.reply_text(f"❌ קוד שגוי. {remaining}.")
     return ASK_INVITE
 
 
