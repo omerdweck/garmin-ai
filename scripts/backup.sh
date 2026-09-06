@@ -16,6 +16,15 @@ BACKUP_DIR="${BACKUP_DIR:-$HOME/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
+# Public half of a keypair whose private half lives only on the operator's
+# laptop. The server can encrypt a backup and cannot read one back - so a
+# stolen disk, a mis-synced folder or a full server compromise yields
+# ciphertext, not several people's health data.
+#
+# The trade-off is real and worth stating: lose that private key and every
+# backup is permanently unreadable. There is no recovery path by design.
+PUBKEY="${PUBKEY:-$HOME/.garmin-ai/backup-public.pem}"
+
 cd "$PROJECT_DIR"
 
 # The dump holds health data and encrypted Garmin tokens - keep the directory
@@ -30,14 +39,27 @@ set -a
 source .env
 set +a
 
-STAMP="$(date +%Y%m%d-%H%M%S)"
-TARGET="$BACKUP_DIR/garmin_ai-$STAMP.sql.gz"
+if [ ! -f "$PUBKEY" ]; then
+    # Refuse rather than fall back to plaintext. A backup silently written
+    # unencrypted is worse than no backup: it looks like the protection is
+    # in place while several people's health data sits readable on disk.
+    echo "backup.sh: no public key at $PUBKEY - refusing to write an unencrypted backup" >&2
+    exit 1
+fi
 
+STAMP="$(date +%Y%m%d-%H%M%S)"
+TARGET="$BACKUP_DIR/garmin_ai-$STAMP.sql.gz.enc"
+
+# Dump -> compress -> encrypt, all streamed: the plaintext never touches the
+# disk at any point, so there is no window in which an unencrypted copy
+# exists to be read or recovered.
+#
 # Write to a .partial name first and rename only on success: an interrupted
 # dump must never be left behind looking like a usable backup.
 docker compose -f "$COMPOSE_FILE" exec -T db \
     pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    | gzip > "$TARGET.partial"
+    | gzip \
+    | openssl cms -encrypt -aes-256-cbc -binary -outform DER -out "$TARGET.partial" "$PUBKEY"
 
 mv "$TARGET.partial" "$TARGET"
 chmod 600 "$TARGET"
@@ -51,7 +73,7 @@ if [ "$SIZE" -lt 1024 ]; then
     exit 1
 fi
 
-find "$BACKUP_DIR" -name 'garmin_ai-*.sql.gz' -mtime "+$RETENTION_DAYS" -delete
+find "$BACKUP_DIR" -name 'garmin_ai-*.sql.gz.enc' -mtime "+$RETENTION_DAYS" -delete
 find "$BACKUP_DIR" -name '*.partial' -mtime +1 -delete
 
-echo "backup.sh: wrote $TARGET (${SIZE} bytes)"
+echo "backup.sh: wrote $TARGET (${SIZE} bytes, encrypted)"
