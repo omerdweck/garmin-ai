@@ -11,4 +11,5 @@ from app.models.chat_message import ChatMessage  # noqa: F401
 from app.models.daily_metric import DailyMetric  # noqa: F401
 from app.models.garmin_account import GarminAccount  # noqa: F401
 from app.models.training_plan import TrainingPlan  # noqa: F401
+from app.models.usage_event import UsageEvent  # noqa: F401
 from app.models.user import User  # noqa: F401

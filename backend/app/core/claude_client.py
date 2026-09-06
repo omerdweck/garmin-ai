@@ -25,12 +25,14 @@ from typing import Optional
 import anthropic
 from sqlmodel import Session, col, select
 
+from app.core.claude_pricing import calculate_cost
 from app.core.claude_prompts import COACH_SYSTEM_PROMPT, DAILY_SUMMARY_SYSTEM_PROMPT
 from app.core.config import settings
 from app.models.activity import Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.training_plan import TrainingPlan
+from app.models.usage_event import UsageEvent
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,52 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
-def _call_claude(client: anthropic.Anthropic, **kwargs):
+def _record_usage(session: Session, user_id: int, kind: str, model: str, usage) -> None:
+    """
+    Persist what one API call consumed.
+
+    Wrapped so it can never break a conversation: an accounting failure must
+    not cost the user their reply. The consequence of a swallowed error here
+    is an under-reported cost, which the warning in the log makes visible.
+
+    The cache counters are read defensively - they are absent on responses
+    that used no caching, and getattr keeps this working if the SDK renames
+    or drops them.
+    """
+    try:
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        event = UsageEvent(
+            user_id=user_id,
+            kind=kind,
+            model=model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            cost_usd=calculate_cost(
+                model,
+                usage.input_tokens,
+                usage.output_tokens,
+                cache_read,
+                cache_write,
+            ),
+        )
+        session.add(event)
+        session.commit()
+    except Exception:
+        logger.exception("Failed to record usage for user %s", user_id)
+        session.rollback()
+
+
+def _call_claude(
+    client: anthropic.Anthropic,
+    *,
+    session: Optional[Session] = None,
+    user_id: Optional[int] = None,
+    kind: str = "chat",
+    **kwargs,
+):
     """
     Single place where the API is actually called, so every failure mode
     gets classified once instead of surfacing to the user as one generic
@@ -75,9 +122,16 @@ def _call_claude(client: anthropic.Anthropic, **kwargs):
     out of credit is something the *owner* has to top up, a bad key is a
     deployment problem, and a network blip just needs retrying. Telling
     the user which one it is saves them guessing.
+
+    Being the one choke point, this is also where usage is metered - every
+    call is counted exactly once, including the extra rounds of a tool-use
+    loop, which a caller-side counter would have missed.
     """
     try:
-        return client.messages.create(**kwargs)
+        response = client.messages.create(**kwargs)
+        if session is not None and user_id is not None:
+            _record_usage(session, user_id, kind, kwargs.get("model", "unknown"), response.usage)
+        return response
     except anthropic.AuthenticationError as exc:
         raise ClaudeAuthError(str(exc)) from exc
     except anthropic.PermissionDeniedError as exc:
@@ -405,6 +459,9 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> str:
     for _ in range(MAX_TOOL_ROUNDS):
         response = _call_claude(
             client,
+            session=session,
+            user_id=user.id,
+            kind="chat",
             model=settings.claude_model,
             max_tokens=2000,
             system=[
@@ -478,6 +535,9 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
 
     response = _call_claude(
         client,
+        session=session,
+        user_id=user.id,
+        kind="daily_summary",
         model=settings.claude_model,
         max_tokens=600,
         system=[
