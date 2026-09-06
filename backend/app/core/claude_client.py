@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import anthropic
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, delete, select
 
 from app.core.claude_pricing import calculate_cost
 from app.core.claude_prompts import COACH_SYSTEM_PROMPT, DAILY_SUMMARY_SYSTEM_PROMPT
@@ -31,6 +31,7 @@ from app.core.config import settings
 from app.models.activity import Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
+from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
 from app.models.user import User
@@ -262,10 +263,51 @@ TOOLS = [
                 "plan": {
                     "type": "string",
                     "description": (
-                        "The full plan in Hebrew, self-contained enough to be understood weeks later "
-                        "without the surrounding conversation: weekly structure, distances/paces or "
-                        "sets, and what it is building toward."
+                        "The reasoning behind the plan in Hebrew, self-contained enough to be "
+                        "understood weeks later without the surrounding conversation: what it is "
+                        "building toward, the overall approach, and how it should progress."
                     ),
+                },
+                "sessions": {
+                    "type": "array",
+                    "description": (
+                        "The week, one entry per training day AND per rest day. Required whenever "
+                        "you prescribe an actual schedule. This is what lets the daily summary tell "
+                        "the user what they have tomorrow, so a plan without it cannot be followed "
+                        "day to day. Include rest days explicitly - an absent day is ambiguous."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "day": {
+                                "type": "string",
+                                "enum": [
+                                    "sunday", "monday", "tuesday", "wednesday",
+                                    "thursday", "friday", "saturday",
+                                ],
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Short name in Hebrew, e.g. 'ריצה קלה', 'אינטרוולים', 'מנוחה'.",
+                            },
+                            "details": {
+                                "type": "string",
+                                "description": (
+                                    "Exactly what to do, in Hebrew. For intervals give the full set "
+                                    "(warm-up, reps, recovery, cool-down). Someone reading this alone, "
+                                    "weeks later, must know what to do without asking."
+                                ),
+                            },
+                            "is_rest": {"type": "boolean"},
+                            "target_distance_km": {"type": "number"},
+                            "target_duration_minutes": {"type": "integer"},
+                            "target_pace": {
+                                "type": "string",
+                                "description": "Free text - a range or a feel is fine, e.g. '5:30-5:45/ק\"מ' or 'קצב שיחה'.",
+                            },
+                        },
+                        "required": ["day", "title"],
+                    },
                 },
             },
             "required": ["discipline", "plan"],
@@ -367,6 +409,44 @@ def fetch_activities(session: Session, user_id: int, limit: int) -> list[dict]:
     return [_activity_to_dict(activity) for activity in activities]
 
 
+def fetch_training_plans(session: Session, user_id: int) -> list[dict]:
+    """
+    Plans with their weekly schedule attached, shared by the coach tool and
+    the daily summary so both see exactly the same thing - a summary that
+    disagreed with what the coach just said would be worse than no summary.
+    """
+    plans = session.exec(select(TrainingPlan).where(TrainingPlan.user_id == user_id)).all()
+
+    result = []
+    for plan in plans:
+        sessions = session.exec(
+            select(PlanSession)
+            .where(PlanSession.plan_id == plan.id)
+            .order_by(col(PlanSession.day_of_week))
+        ).all()
+        result.append(
+            {
+                "discipline": plan.discipline,
+                "plan": plan.plan,
+                "updated_at": plan.updated_at.isoformat(),
+                "week": [
+                    {
+                        "day": DAY_KEYS[s.day_of_week],
+                        "day_he": DAY_NAMES_HE[s.day_of_week],
+                        "title": s.title,
+                        "details": s.details,
+                        "is_rest": s.is_rest,
+                        "target_distance_km": s.target_distance_km,
+                        "target_duration_minutes": s.target_duration_minutes,
+                        "target_pace": s.target_pace,
+                    }
+                    for s in sessions
+                ],
+            }
+        )
+    return result
+
+
 def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> str:
     """Runs one tool and returns its result as a JSON string for the API."""
     if name == "get_recent_daily_metrics":
@@ -385,23 +465,10 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
         return json.dumps({"saved": True, "goal": user.training_goal}, ensure_ascii=False)
 
     if name == "get_training_plans":
-        rows = session.exec(select(TrainingPlan).where(TrainingPlan.user_id == user.id)).all()
         # updated_at travels with each plan: a plan written five weeks ago
         # should be revised against what the user has actually done since,
         # not recited as though it were still current.
-        return json.dumps(
-            {
-                "plans": [
-                    {
-                        "discipline": row.discipline,
-                        "plan": row.plan,
-                        "updated_at": row.updated_at.isoformat(),
-                    }
-                    for row in rows
-                ]
-            },
-            ensure_ascii=False,
-        )
+        return json.dumps({"plans": fetch_training_plans(session, user.id)}, ensure_ascii=False)
 
     if name == "set_training_plan":
         discipline = tool_input.get("discipline")
@@ -418,7 +485,43 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
             existing.updated_at = datetime.now(timezone.utc)
         session.add(existing)
         session.commit()
-        return json.dumps({"saved": True, "discipline": discipline}, ensure_ascii=False)
+        session.refresh(existing)
+
+        sessions = tool_input.get("sessions")
+        if sessions is not None:
+            # Replace rather than merge. A revised week is a whole week - the
+            # model sends the new schedule entire, and merging would leave
+            # sessions from the old one stranded on days the new plan
+            # deliberately left empty.
+            session.exec(
+                delete(PlanSession).where(
+                    PlanSession.user_id == user.id,
+                    PlanSession.plan_id == existing.id,
+                )
+            )
+            for item in sessions:
+                day = item.get("day")
+                if day not in DAY_KEYS:
+                    continue
+                session.add(
+                    PlanSession(
+                        user_id=user.id,
+                        plan_id=existing.id,
+                        day_of_week=DAY_KEYS.index(day),
+                        title=item.get("title") or "",
+                        details=item.get("details"),
+                        is_rest=bool(item.get("is_rest")),
+                        target_distance_km=item.get("target_distance_km"),
+                        target_duration_minutes=item.get("target_duration_minutes"),
+                        target_pace=item.get("target_pace"),
+                    )
+                )
+            session.commit()
+
+        return json.dumps(
+            {"saved": True, "discipline": discipline, "sessions": len(sessions or [])},
+            ensure_ascii=False,
+        )
 
     if name == "delete_training_plan":
         existing = session.exec(
@@ -428,6 +531,9 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
             )
         ).first()
         if existing is not None:
+            # Sessions first: they carry a foreign key to the plan, and there
+            # is no ON DELETE CASCADE to fall back on.
+            session.exec(delete(PlanSession).where(PlanSession.plan_id == existing.id))
             session.delete(existing)
             session.commit()
         return json.dumps({"deleted": existing is not None}, ensure_ascii=False)
@@ -542,12 +648,37 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     if not metrics and not activities:
         return None
 
-    today = date_type.today().isoformat()
+    today_date = date_type.today()
+    today = today_date.isoformat()
+
+    # Python's weekday() is Monday=0; the plan's week is Sunday=0, which is
+    # the week these users actually train on. isoweekday() % 7 converts
+    # directly: Sunday 7 -> 0, Monday 1 -> 1, and so on.
+    tomorrow_index = (today_date + timedelta(days=1)).isoweekday() % 7
+
+    plans = fetch_training_plans(session, user.id)
+    tomorrow_sessions = [
+        {"discipline": plan["discipline"], **item}
+        for plan in plans
+        for item in plan["week"]
+        if DAY_KEYS.index(item["day"]) == tomorrow_index
+    ]
+
     payload = {
         "today": today,
         "goal": user.training_goal,
         "daily_metrics_last_7_days": metrics,
         "recent_activities": activities,
+        # The whole plan, so adherence can be judged against what was
+        # actually prescribed rather than a general sense of "enough".
+        "training_plans": plans,
+        # Pre-selected rather than left for the model to work out from the
+        # day of week: getting tomorrow wrong is the one error that makes
+        # this section worse than useless.
+        "tomorrow": {
+            "day": DAY_NAMES_HE[tomorrow_index],
+            "sessions": tomorrow_sessions,
+        },
     }
 
     response = _call_claude(
