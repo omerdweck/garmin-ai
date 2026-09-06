@@ -63,6 +63,12 @@ from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
 from app.models.activity import Activity
+from app.services.admin_view import (
+    format_admin_summary,
+    format_admin_users,
+    format_new_user_alert,
+    set_user_limit,
+)
 from app.services.usage_limits import QuotaExceeded, check_quota
 from app.services.activity_view import (
     activity_type_counts,
@@ -417,6 +423,23 @@ async def do_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     sync_one_user_task.delay(user_id, notify_on_success=True)
     backfill_user_history_task.delay(user_id)
 
+    # Tell the owner immediately. Finding out from the monthly invoice that
+    # strangers have been using the bot is exactly the situation the usage
+    # tracking exists to prevent, and a ceiling nobody looks at is not a
+    # control. Best-effort: a failed notification must not derail a
+    # successful signup.
+    if settings.is_admin_configured and settings.admin_chat_id != update.effective_chat.id:
+        try:
+            with Session(engine) as admin_session:
+                new_user = admin_session.get(User, user_id)
+                await context.bot.send_message(
+                    settings.admin_chat_id,
+                    format_new_user_alert(admin_session, new_user),
+                    parse_mode="Markdown",
+                )
+        except Exception:
+            logger.warning("Could not notify admin of new user %s", user_id, exc_info=True)
+
     await update.effective_chat.send_message(
         "🔔 *דבר אחרון* - אני יכול לשלוח לך סיכום קצר בסוף כל יום: "
         "מה עשית, איך הגוף הגיב, ומה כדאי לתכנן למחר.\n\n"
@@ -425,6 +448,63 @@ async def do_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=_summary_hour_keyboard(),
     )
     return ConversationHandler.END
+
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Owner-only usage reporting and user management.
+
+    A non-owner gets silence, not a refusal: "you are not authorised" would
+    confirm the command exists and invite probing. As far as anyone else is
+    concerned there is no /admin. For the same reason it is left out of
+    set_my_commands, so it never appears in anyone's command menu.
+    """
+    chat_id = update.effective_chat.id
+    if not settings.is_admin_configured or chat_id != settings.admin_chat_id:
+        logger.info("Ignoring /admin from non-admin chat %s", chat_id)
+        return
+
+    args = context.args or []
+
+    with Session(engine) as session:
+        if not args:
+            text = format_admin_summary(session)
+
+        elif args[0] == "users":
+            text = format_admin_users(session)
+
+        elif args[0] == "limit" and len(args) == 3:
+            try:
+                text = set_user_limit(session, int(args[1]), int(args[2]))
+            except ValueError:
+                text = "❌ שימוש: `/admin limit <user_id> <מספר>`"
+
+        elif args[0] == "delete" and len(args) == 2:
+            # No confirmation step here on purpose: this is a typed command
+            # available to one chat, and the destructive path users reach
+            # through the menu already has its own two-button confirmation.
+            try:
+                target = int(args[1])
+            except ValueError:
+                text = "❌ שימוש: `/admin delete <user_id>`"
+            else:
+                if target == update.effective_user.id:
+                    text = "❌ לא ניתן למחוק את חשבון המנהל דרך הפקודה הזו."
+                elif session.get(User, target) is None:
+                    text = f"❌ אין משתמש {target}"
+                else:
+                    delete_user_completely(session, target)
+                    text = f"🗑 משתמש {target} נמחק על כל נתוניו."
+        else:
+            text = (
+                "*פקודות ניהול*\n"
+                "`/admin` - סיכום\n"
+                "`/admin users` - רשימת משתמשים\n"
+                "`/admin limit <id> <n>` - מכסה יומית (0 = חסימה)\n"
+                "`/admin delete <id>` - מחיקה מלאה"
+            )
+
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -945,6 +1025,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("menu", show_menu))
     application.add_handler(CommandHandler("sync", sync_now))
     application.add_handler(CommandHandler("settings", show_settings))
+    # Deliberately absent from set_my_commands below - see admin().
+    application.add_handler(CommandHandler("admin", admin))
 
     # Exact-text handlers for the menu buttons, registered before the
     # catch-all so a button tap is never mistaken for a typed question -
