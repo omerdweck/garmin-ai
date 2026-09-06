@@ -6,7 +6,7 @@ SQLModel so we never accidentally leak internal fields (hashed_password)
 or accept fields we don't want (id, is_admin) directly from a client.
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from pydantic import AfterValidator, BaseModel, EmailStr
 
@@ -38,6 +38,12 @@ NormalizedEmail = Annotated[EmailStr, AfterValidator(_normalize_email)]
 class UserRegister(BaseModel):
     email: NormalizedEmail
     password: str
+    # Optional in the schema, enforced in the endpoint. Declaring it required
+    # here would make a missing code a 422 validation error listing the field
+    # name, which tells an anonymous caller that an invite system exists and
+    # what to send. The endpoint answers a missing and a wrong code
+    # identically instead.
+    invite_code: Optional[str] = None
 
 
 class UserLogin(BaseModel):
