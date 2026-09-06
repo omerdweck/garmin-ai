@@ -75,7 +75,12 @@ class Settings(BaseSettings):
     # is configured. Code that needs it checks `is_claude_configured` and
     # degrades with a clear message instead of the whole bot failing to boot.
     anthropic_api_key: Optional[str] = None
-    claude_model: str = "claude-opus-5"
+    # Sonnet rather than Opus: measured against this project's own traffic
+    # (10 users, ~3 coach turns each per day) Opus came to ~$42/month against
+    # Sonnet's ~$17 for work that is summarising health metrics and drafting a
+    # training plan - not the kind of reasoning that pays for the top tier.
+    # Override in .env to try another tier; nothing else has to change.
+    claude_model: str = "claude-sonnet-5"
 
     @property
     def is_claude_configured(self) -> bool:
