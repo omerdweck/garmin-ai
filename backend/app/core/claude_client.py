@@ -19,7 +19,7 @@ this safe to run for many users on one bot.
 import json
 import logging
 from datetime import date as date_type
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import anthropic
@@ -30,6 +30,7 @@ from app.core.config import settings
 from app.models.activity import Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
+from app.models.training_plan import TrainingPlan
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,67 @@ TOOLS = [
             "required": ["goal"],
         },
     },
+    {
+        "name": "get_training_plans",
+        "description": (
+            "Returns every training plan previously prescribed to this user, one per discipline, "
+            "each with the date it was written. Call this before answering anything about progress, "
+            "adherence, or 'the plan you gave me' - the chat history only holds the last few turns, "
+            "so an older plan is not in context. Never describe a plan from memory: if this returns "
+            "nothing for a discipline, say so instead of inventing one."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_training_plan",
+        "description": (
+            "Saves the training plan for ONE discipline so it survives beyond this conversation. "
+            "Call this whenever you prescribe a concrete plan. Saving a discipline replaces only "
+            "that discipline's plan and leaves the others alone, so a user can have a running plan "
+            "and a swimming plan at the same time. To revise an existing plan, call this again with "
+            "the same discipline and the full updated plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "discipline": {
+                    "type": "string",
+                    # A closed list, not free text: the same sport written two
+                    # different ways would create two rows and the user would
+                    # end up with duplicate, conflicting plans.
+                    "enum": ["running", "swimming", "cycling", "strength", "general"],
+                    "description": "Which discipline this plan covers. Use 'general' for overall fitness or mixed training.",
+                },
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "The full plan in Hebrew, self-contained enough to be understood weeks later "
+                        "without the surrounding conversation: weekly structure, distances/paces or "
+                        "sets, and what it is building toward."
+                    ),
+                },
+            },
+            "required": ["discipline", "plan"],
+        },
+    },
+    {
+        "name": "delete_training_plan",
+        "description": (
+            "Removes the plan for one discipline - use when the user says they are stopping that "
+            "training, or the event it was built for has passed. Do not use it to replace a plan; "
+            "set_training_plan already overwrites."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "discipline": {
+                    "type": "string",
+                    "enum": ["running", "swimming", "cycling", "strength", "general"],
+                }
+            },
+            "required": ["discipline"],
+        },
+    },
 ]
 
 
@@ -250,6 +312,54 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
         session.add(user)
         session.commit()
         return json.dumps({"saved": True, "goal": user.training_goal}, ensure_ascii=False)
+
+    if name == "get_training_plans":
+        rows = session.exec(select(TrainingPlan).where(TrainingPlan.user_id == user.id)).all()
+        # updated_at travels with each plan: a plan written five weeks ago
+        # should be revised against what the user has actually done since,
+        # not recited as though it were still current.
+        return json.dumps(
+            {
+                "plans": [
+                    {
+                        "discipline": row.discipline,
+                        "plan": row.plan,
+                        "updated_at": row.updated_at.isoformat(),
+                    }
+                    for row in rows
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    if name == "set_training_plan":
+        discipline = tool_input.get("discipline")
+        existing = session.exec(
+            select(TrainingPlan).where(
+                TrainingPlan.user_id == user.id,
+                TrainingPlan.discipline == discipline,
+            )
+        ).first()
+        if existing is None:
+            existing = TrainingPlan(user_id=user.id, discipline=discipline, plan=tool_input.get("plan"))
+        else:
+            existing.plan = tool_input.get("plan")
+            existing.updated_at = datetime.now(timezone.utc)
+        session.add(existing)
+        session.commit()
+        return json.dumps({"saved": True, "discipline": discipline}, ensure_ascii=False)
+
+    if name == "delete_training_plan":
+        existing = session.exec(
+            select(TrainingPlan).where(
+                TrainingPlan.user_id == user.id,
+                TrainingPlan.discipline == tool_input.get("discipline"),
+            )
+        ).first()
+        if existing is not None:
+            session.delete(existing)
+            session.commit()
+        return json.dumps({"deleted": existing is not None}, ensure_ascii=False)
 
     return json.dumps({"error": f"unknown tool {name}"})
 
