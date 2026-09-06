@@ -67,11 +67,16 @@ from app.services.admin_view import (
     format_admin_summary,
     format_admin_users,
     format_new_user_alert,
+    format_pending_requests,
     set_user_limit,
 )
+from app.models.join_request import STATUS_PENDING, STATUS_REJECTED
 from app.services.signup_control import (
-    MAX_INVITE_ATTEMPTS,
-    invite_code_matches,
+    create_or_refresh_request,
+    decide,
+    get_request,
+    is_approved,
+    pending_requests,
     rejection_reason,
 )
 from app.services.usage_limits import QuotaExceeded, check_quota
@@ -114,12 +119,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-ASK_INVITE, AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(4)
-
-# Counts wrong invite codes within one conversation. In user_data, so it
-# resets if the bot restarts - acceptable, because the real ceiling on
-# guessing is that a wrong code reveals nothing and the cap still applies.
-INVITE_ATTEMPTS_KEY = "invite_attempts"
+AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(3)
 
 # Terms acceptance timestamp, held in memory across the onboarding
 # conversation and written to the User row only once linking succeeds -
@@ -311,24 +311,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=ReplyKeyboardRemove(),
         )
     else:
-        # AccountState.UNKNOWN - a genuinely new person, and the only path
-        # that creates a user. Both gates apply here and nowhere else:
-        # someone already registered must never be locked out by a code
-        # change or a lowered cap.
+        # AccountState.UNKNOWN - a genuinely new person. Both gates apply
+        # here and nowhere else: someone already registered must never be
+        # locked out by a lowered cap or a changed approval.
         with Session(engine) as session:
             refusal = rejection_reason(session)
+            approved = is_approved(session, update.effective_chat.id)
+            existing = get_request(session, update.effective_chat.id)
+
         if refusal is not None:
             await update.message.reply_text(refusal, reply_markup=ReplyKeyboardRemove())
             return ConversationHandler.END
 
-        if settings.is_invite_required:
-            context.user_data[INVITE_ATTEMPTS_KEY] = 0
-            await update.message.reply_text(
-                "🔒 *הבוט הזה בהזמנה בלבד*\n\nשלח את קוד ההזמנה שקיבלת:",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return ASK_INVITE
+        if not approved:
+            await _prompt_for_access(update, existing)
+            return ConversationHandler.END
 
         await update.message.reply_text(WELCOME, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
 
@@ -336,37 +333,141 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return AWAITING_TERMS
 
 
-async def on_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def _prompt_for_access(update: Update, existing) -> None:
     """
-    Checks the invite code, then hands over to the terms exactly as an open
-    signup would - the gate adds a step, it does not change what follows.
+    What an unapproved newcomer sees. Ends the conversation rather than
+    holding them in a state: approval arrives minutes or hours later, out of
+    band, and a conversation waiting on it would be a mode they are stuck in.
+    They send /start again once told they are in.
     """
-    chat_id = update.effective_chat.id
-
-    if invite_code_matches(update.message.text or ""):
-        logger.info("Invite code accepted for chat %s", chat_id)
-        await update.message.reply_text(WELCOME, parse_mode="Markdown")
-        await update.effective_chat.send_message(
-            TERMS, parse_mode="Markdown", reply_markup=_terms_keyboard()
+    if existing is not None and existing.status == STATUS_PENDING:
+        await update.message.reply_text(
+            "⏳ *הבקשה שלך נשלחה וממתינה לאישור*\n\nתקבל הודעה ברגע שהיא תאושר.",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove(),
         )
-        return AWAITING_TERMS
+        return
 
-    attempts = context.user_data.get(INVITE_ATTEMPTS_KEY, 0) + 1
-    context.user_data[INVITE_ATTEMPTS_KEY] = attempts
-    logger.warning("Wrong invite code from chat %s (attempt %s)", chat_id, attempts)
+    if existing is not None and existing.status == STATUS_REJECTED:
+        # No retry button: someone told no should not be able to re-ask their
+        # way in by tapping again. The owner can still change their mind.
+        await update.message.reply_text(
+            "הבקשה שלך להצטרפות לא אושרה.\n\nאם לדעתך זו טעות - פנה למי שנתן לך את הקישור.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
 
-    if attempts >= MAX_INVITE_ATTEMPTS:
-        # Ending the conversation is the whole point: without a ceiling, a
-        # short code is guessable at machine speed and the gate is decoration.
-        await update.message.reply_text("❌ יותר מדי ניסיונות. פנה למי שהזמין אותך.")
-        return ConversationHandler.END
+    await update.message.reply_text(
+        "🔒 *הבוט הזה פרטי*\n\n"
+        "כדי להצטרף צריך אישור של מי שמפעיל אותו.\n"
+        "אם הוזמנת - שלח בקשה והוא יקבל התראה 👇",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await update.effective_chat.send_message(
+        "מוכן?",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🙋 בקש גישה", callback_data="join:request")]]
+        ),
+    )
 
-    # Says nothing about how wrong the code was - no "close", no length hint.
-    left = MAX_INVITE_ATTEMPTS - attempts
-    # Hebrew inflects for one: "נותר ניסיון אחד", never "נותרו 1 ניסיונות".
-    remaining = "נותר ניסיון אחד" if left == 1 else f"נותרו {left} ניסיונות"
-    await update.message.reply_text(f"❌ קוד שגוי. {remaining}.")
-    return ASK_INVITE
+
+async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Records the request and puts it in front of the owner."""
+    query = update.callback_query
+    await query.answer()
+
+    chat = update.effective_chat
+    user = update.effective_user
+
+    with Session(engine) as session:
+        if rejection_reason(session) is not None or is_approved(session, chat.id):
+            # Capacity filled, or they were approved between tapping and now.
+            await query.edit_message_text("שלח /start כדי להמשיך.")
+            return
+
+        display_name = " ".join(filter(None, [user.first_name, user.last_name])) or None
+        request = create_or_refresh_request(session, chat.id, display_name, user.username)
+        if request.status == STATUS_REJECTED:
+            await query.edit_message_text("הבקשה שלך להצטרפות לא אושרה.")
+            return
+
+        pending = len(pending_requests(session))
+
+    await query.edit_message_text(
+        "✅ הבקשה נשלחה.\n\nתקבל הודעה ברגע שהיא תאושר."
+    )
+
+    # Everything shown to the owner except the chat id is chosen by the
+    # requester - a display name is not identity. The id is the part nobody
+    # can pick, which is why it is shown alongside.
+    handle = f"@{user.username}" if user.username else "אין שם משתמש"
+    try:
+        await context.bot.send_message(
+            settings.admin_chat_id,
+            "🙋 *בקשת הצטרפות חדשה*\n\n"
+            f"שם: {display_name or 'לא צוין'}\n"
+            f"יוזר: {handle}\n"
+            f"מזהה: `{chat.id}`\n\n"
+            f"_ממתינות: {pending}_\n"
+            "⚠️ השם והיוזר נבחרים על ידי המבקש. אשר רק אם אתה מזהה.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("✅ אשר", callback_data=f"join_decide:approve:{chat.id}"),
+                        InlineKeyboardButton("❌ דחה", callback_data=f"join_decide:reject:{chat.id}"),
+                    ]
+                ]
+            ),
+        )
+    except Exception:
+        # The request is already stored, so /admin requests still surfaces it.
+        logger.exception("Could not notify admin of join request from %s", chat.id)
+
+
+async def on_join_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only. The callback_data carries the target chat id."""
+    query = update.callback_query
+
+    if not settings.is_admin_configured or update.effective_chat.id != settings.admin_chat_id:
+        # Someone who guessed the callback format. Answer nothing useful.
+        await query.answer()
+        logger.warning("Ignoring join decision from non-admin chat %s", update.effective_chat.id)
+        return
+
+    await query.answer()
+    _, action, raw_chat_id = query.data.split(":", 2)
+    target = int(raw_chat_id)
+    approved = action == "approve"
+
+    with Session(engine) as session:
+        request = decide(session, target, approved)
+        if request is None:
+            await query.edit_message_text("הבקשה כבר לא קיימת.")
+            return
+        name = request.display_name or str(target)
+
+    await query.edit_message_text(
+        f"{'✅ אושר' if approved else '❌ נדחה'}: {name} (`{target}`)",
+        parse_mode="Markdown",
+    )
+
+    try:
+        if approved:
+            await context.bot.send_message(
+                target,
+                "🎉 *הבקשה שלך אושרה!*\n\nשלח /start כדי להתחיל.",
+                parse_mode="Markdown",
+            )
+        else:
+            await context.bot.send_message(
+                target,
+                "הבקשה שלך להצטרפות לא אושרה.",
+            )
+    except Exception:
+        # A user who blocked the bot or deleted the chat. The decision stands.
+        logger.warning("Could not notify chat %s of decision", target, exc_info=True)
 
 
 async def on_terms_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -527,6 +628,9 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     args = context.args or []
+    # Collected inside the session and sent after it closes: a Telegram call
+    # is network I/O and has no business inside a database transaction.
+    pending_notifications: list[tuple[int, bool]] = []
 
     with Session(engine) as session:
         if not args:
@@ -534,6 +638,25 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         elif args[0] == "users":
             text = format_admin_users(session)
+
+        elif args[0] == "requests":
+            text = format_pending_requests(session)
+
+        elif args[0] in ("approve", "reject") and len(args) == 2:
+            # The same decision the inline buttons make, reachable when the
+            # notification carrying them has been swiped away.
+            try:
+                target = int(args[1])
+            except ValueError:
+                text = "❌ שימוש: `/admin approve <chat_id>`"
+            else:
+                approved = args[0] == "approve"
+                decided = decide(session, target, approved)
+                if decided is None:
+                    text = f"❌ אין בקשה מ-{target}"
+                else:
+                    text = f"{'✅ אושר' if approved else '❌ נדחה'}: {target}"
+                    pending_notifications.append((target, approved))
 
         elif args[0] == "limit" and len(args) == 3:
             try:
@@ -562,11 +685,25 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "*פקודות ניהול*\n"
                 "`/admin` - סיכום\n"
                 "`/admin users` - רשימת משתמשים\n"
+                "`/admin requests` - בקשות הצטרפות ממתינות\n"
+                "`/admin approve <chat_id>` - אישור בקשה\n"
+                "`/admin reject <chat_id>` - דחיית בקשה\n"
                 "`/admin limit <id> <n>` - מכסה יומית (0 = חסימה)\n"
                 "`/admin delete <id>` - מחיקה מלאה"
             )
 
     await update.message.reply_text(text, parse_mode="Markdown")
+
+    for target, approved in pending_notifications:
+        try:
+            await context.bot.send_message(
+                target,
+                "🎉 *הבקשה שלך אושרה!*\n\nשלח /start כדי להתחיל." if approved
+                else "הבקשה שלך להצטרפות לא אושרה.",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            logger.warning("Could not notify chat %s of decision", target, exc_info=True)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1074,7 +1211,6 @@ def build_application() -> Application:
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            ASK_INVITE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_invite_code)],
             # Only the inline buttons advance from here - typed text is
             # ignored until the terms are answered one way or the other.
             AWAITING_TERMS: [CallbackQueryHandler(on_terms_response, pattern=r"^terms:")],
@@ -1112,6 +1248,10 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
     application.add_handler(CallbackQueryHandler(on_account_action, pattern=r"^account:"))
+    # Outside the conversation on purpose: approval arrives out of band,
+    # minutes or hours later, so neither side can be held in a state.
+    application.add_handler(CallbackQueryHandler(on_join_request, pattern=r"^join:request$"))
+    application.add_handler(CallbackQueryHandler(on_join_decision, pattern=r"^join_decide:"))
     # Ordered narrowest-first: "acttype_menu" would otherwise be swallowed
     # by the broader "acttype:" pattern.
     application.add_handler(CallbackQueryHandler(on_activity_types_menu, pattern=r"^acttype_menu$"))

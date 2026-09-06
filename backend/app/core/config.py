@@ -109,21 +109,20 @@ class Settings(BaseSettings):
         return self.admin_chat_id is not None
 
     # --- Who may register ------------------------------------------------
-    # Optional rather than required, so an unconfigured deployment still
-    # onboards its own owner instead of locking everyone out on first run.
-    # That does mean the default is open, which is only safe because the
-    # cap below is not - and because the admin summary reports an open door
-    # rather than letting it pass unnoticed.
-    invite_code: Optional[str] = None
-
-    # The backstop for when the code leaks - and a code shared in a group
-    # chat eventually does. Counts existing users too: lowering it stops new
-    # signups, it never removes anyone.
+    # Access is granted by the owner approving a named person through the
+    # bot, so there is no shared secret to configure. This is the hard
+    # ceiling above that: it counts existing users, so lowering it stops new
+    # signups without ever removing anybody.
+    #
+    # Note that admin_chat_id above is what makes signup possible at all -
+    # with no approver configured, nobody can be let in.
     max_users: int = 10
 
-    @property
-    def is_invite_required(self) -> bool:
-        return bool(self.invite_code)
+    # The website's own registration endpoint. Off because it cannot ask for
+    # the owner's approval the way the bot does; see app/routers/auth.py.
+    # Turning it on without building that approval step re-opens the only
+    # gate this design has.
+    website_registration_enabled: bool = False
 
     @property
     def database_url(self) -> str:

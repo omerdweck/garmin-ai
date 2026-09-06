@@ -21,6 +21,7 @@ website-only users with telegram_chat_id=NULL, is fine.
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import BigInteger, Column
 from sqlmodel import Field, SQLModel
 
 
@@ -28,7 +29,15 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     email: Optional[str] = Field(default=None, unique=True, index=True)
     hashed_password: Optional[str] = None
-    telegram_chat_id: Optional[int] = Field(default=None, unique=True, index=True)
+    # BIGINT, not the INTEGER that a plain `int` would map to. Telegram ids
+    # have outgrown 32 bits: accounts created in recent years get values like
+    # 6123456789, well past INTEGER's 2,147,483,647 ceiling. Left as-is, the
+    # first friend with a newer Telegram account would have failed to
+    # register with an overflow error that says nothing about the cause.
+    telegram_chat_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, unique=True, index=True, nullable=True),
+    )
 
     # management flags: is_active is set to True once the email verification link is used, is_admin for the admin panel
     is_active: bool = Field(default=False)

@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.models.garmin_account import GarminAccount
 from app.models.usage_event import UsageEvent
 from app.models.user import User
-from app.services.signup_control import signup_status
+from app.services.signup_control import decide, pending_requests, signup_status
 from app.services.usage_limits import usage_report
 
 RLM = "‏"
@@ -51,14 +51,16 @@ def format_admin_summary(session: Session) -> str:
         "",
     ]
 
-    # An open front door has to be visible. The invite code is optional so a
-    # fresh deployment can onboard its own owner, which means "no code set"
-    # is a reachable state - and one nobody would otherwise notice until a
-    # stranger showed up in the user list.
-    if signup["invite_required"]:
-        lines.append(_rtl("🔒 הרשמה: בקוד הזמנה"))
+    # Without an approver nobody can ever be let in, which is a state worth
+    # shouting about rather than discovering when a friend says the bot
+    # ignored them.
+    if not signup["approver_configured"]:
+        lines.append(_rtl("⚠️ *אין מאשר מוגדר* - אף אחד לא יכול להצטרף. הגדר ADMIN_CHAT_ID"))
     else:
-        lines.append(_rtl("⚠️ *הרשמה פתוחה לכל* - הגדר INVITE_CODE"))
+        lines.append(_rtl("🔒 הרשמה: באישור שלך"))
+
+    if signup["pending"]:
+        lines.append(_rtl(f"🙋 *ממתינות לאישור: {signup['pending']}* - `/admin requests`"))
     if signup["full"]:
         lines.append(_rtl("🚧 מלא - הרשמות חדשות נחסמות"))
 
@@ -99,6 +101,29 @@ def format_admin_users(session: Session) -> str:
         "",
         _rtl("`/admin limit <id> <n>` - שינוי מכסה (0 = חסימה)"),
         _rtl("`/admin delete <id>` - מחיקה מלאה"),
+    ]
+    return "\n".join(lines)
+
+
+def format_pending_requests(session: Session) -> str:
+    """
+    Anyone still waiting. Exists because the approval buttons arrive as a
+    Telegram notification, and notifications get swiped away - without this
+    a missed one means someone waits forever with no way to ask again.
+    """
+    requests = pending_requests(session)
+    if not requests:
+        return _rtl("אין בקשות ממתינות ✓")
+
+    lines = [_rtl("🙋 *בקשות ממתינות*"), ""]
+    for r in requests:
+        handle = f"@{r.telegram_username}" if r.telegram_username else "אין שם משתמש"
+        lines.append(_rtl(f"*{r.display_name or 'לא צוין'}* · {handle}"))
+        lines.append(_rtl(f"   מזהה: `{r.telegram_chat_id}` · {r.requested_at.strftime('%d/%m %H:%M')}"))
+    lines += [
+        "",
+        _rtl("`/admin approve <chat_id>` · `/admin reject <chat_id>`"),
+        _rtl("⚠️ השם והיוזר נבחרים על ידי המבקש - אשר רק אם אתה מזהה."),
     ]
     return "\n".join(lines)
 

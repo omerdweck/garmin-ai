@@ -8,10 +8,16 @@ people by chat id and touches none of this. They are kept working, and
 gated, rather than deleted, so the website can be resumed without rebuilding
 the auth flow from scratch.
 
-BEFORE EXPOSING THIS TO THE INTERNET: /register and /login both need rate
-limiting at the reverse proxy. An HTTP endpoint has no equivalent of the
-bot's per-conversation attempt counter, so the invite-code check below can
-be attempted as fast as the network allows.
+Registration here is disabled (settings.website_registration_enabled).
+Access is granted by the owner approving a named person in the bot, and an
+anonymous HTTP caller cannot satisfy that - so this endpoint would be a way
+around the only gate the design has.
+
+BEFORE EXPOSING THIS TO THE INTERNET: /login needs rate limiting at the
+reverse proxy, and re-enabling /register needs its own approval step first,
+not just the flag. An HTTP endpoint has no equivalent of the bot's
+conversation state, so anything guessable here can be tried as fast as the
+network allows.
 """
 
 import logging
@@ -27,7 +33,6 @@ from app.core.security import create_access_token, generate_verification_token, 
 from app.db.session import get_session
 from app.models.user import User
 from app.schemas.user import Token, UserLogin, UserPublic, UserRegister
-from app.services.signup_control import invite_code_matches, rejection_reason
 
 logger = logging.getLogger(__name__)
 
@@ -42,26 +47,25 @@ def register(
     request: Request,
     session: Session = Depends(get_session),
 ) -> User:
-    # Same two gates the Telegram flow applies, for the same reason: this is
-    # the *other* path that creates a User, and it was previously open. It is
-    # unreachable today (the API binds to 127.0.0.1 and email is unconfigured)
-    # but that is circumstance, not a decision - the day this deployment grows
-    # a reverse proxy the door would otherwise stand open with nobody
-    # remembering it exists.
+    # Off by default. Access is granted by the owner approving a named person
+    # in a Telegram conversation, and there is no honest way for an anonymous
+    # HTTP caller to satisfy that - so leaving this path open would let the
+    # one mechanism the whole design rests on be walked around with a POST.
     #
-    # Checked before the user row is created, not after: a gate that runs
-    # afterwards has already written the thing it was meant to prevent.
-    refusal = rejection_reason(session)
-    if refusal is not None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Registration is closed")
-
-    if settings.is_invite_required and not invite_code_matches(data.invite_code or ""):
-        # Logged with the caller's address because, unlike the bot's
-        # conversation, an HTTP endpoint has no per-session attempt counter.
-        # Real rate limiting belongs at the reverse proxy that would expose
-        # this - see the note in the module docstring.
-        logger.warning("Rejected registration with bad invite code from %s", request.client.host if request.client else "unknown")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid invite code")
+    # A flag rather than an early raise with the body left dead below it:
+    # unreachable code invites someone to "clean it up", and the point is that
+    # this flow still works and is meant to be resumed. Turning the flag on is
+    # not sufficient on its own - the website needs its own approval step
+    # first, or this is simply the open door again.
+    if not settings.website_registration_enabled:
+        logger.warning(
+            "Rejected website registration attempt from %s",
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is handled through the Telegram bot",
+        )
 
     existing = session.exec(select(User).where(User.email == data.email)).first()
     if existing is not None:
