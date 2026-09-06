@@ -6,6 +6,9 @@ showing it or deleting it costs nothing and should never spend a token.
 Claude is for building and revising a plan - not for reciting one.
 """
 
+from datetime import date as date_type
+from datetime import timedelta
+
 from sqlmodel import Session, col, delete, select
 
 from app.models.plan_session import DAY_NAMES_HE, PlanSession
@@ -68,6 +71,81 @@ def format_plan(session: Session, plan: TrainingPlan) -> str:
             lines.append(_rtl(f"*{day}* — {item.title}{suffix}"))
             if item.details:
                 lines.append(_rtl(f"   {item.details}"))
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def format_upcoming_week(session: Session, user_id: int) -> str:
+    """
+    The next seven days, dated, with every discipline merged into each day.
+
+    Seven days forward from today rather than a fixed Sunday-to-Saturday
+    week: opening this on a Wednesday should not show four days that have
+    already been and gone.
+
+    Merged by day rather than listed per plan because "what do I have on
+    Tuesday" is a question that crosses disciplines - someone running and
+    swimming wants one answer, not two lists to reconcile.
+    """
+    plans = active_plans(session, user_id)
+    if not plans:
+        return ""
+
+    by_plan = {p.id: p.discipline for p in plans}
+    sessions = session.exec(
+        select(PlanSession).where(PlanSession.plan_id.in_(list(by_plan)))
+    ).all()
+
+    by_day: dict[int, list] = {}
+    for item in sessions:
+        by_day.setdefault(item.day_of_week, []).append(item)
+
+    today = date_type.today()
+    lines = [_rtl("📋 *התוכנית שלך - השבוע הקרוב*"), ""]
+
+    for offset in range(7):
+        day = today + timedelta(days=offset)
+        # isoweekday() is Monday=1..Sunday=7; % 7 maps Sunday to 0, matching
+        # the stored week.
+        index = day.isoweekday() % 7
+        items = by_day.get(index, [])
+
+        marker = " _(היום)_" if offset == 0 else (" _(מחר)_" if offset == 1 else "")
+        # The date always gets its own line, even for a single session. With
+        # two disciplines on one day, hanging the first workout off the date
+        # and indenting the second made them look like different kinds of
+        # thing rather than two equal items on the same day.
+        lines.append(_rtl(f"*{DAY_NAMES_HE[index]} {day.strftime('%d/%m')}*{marker}"))
+
+        if not items:
+            # No row at all is not the same as a prescribed rest day, and
+            # saying so is more honest than implying the coach chose it.
+            lines.append(_rtl("   אין אימון מתוכנן"))
+            lines.append("")
+            continue
+
+        # Rest days last: on a day with both a swim and a "rest from
+        # running", the session you have to act on should be read first.
+        for item in sorted(items, key=lambda i: i.is_rest):
+            label = discipline_label(by_plan[item.plan_id]).split(" ", 1)[0]
+
+            if item.is_rest:
+                lines.append(_rtl(f"   {label} {item.title} 😴"))
+                continue
+
+            targets = []
+            if item.target_distance_km:
+                targets.append(f"{item.target_distance_km:g} ק\"מ")
+            if item.target_duration_minutes:
+                targets.append(f"{item.target_duration_minutes} דק\'")
+            if item.target_pace:
+                targets.append(item.target_pace)
+            suffix = f" · {' · '.join(targets)}" if targets else ""
+            lines.append(_rtl(f"   {label} *{item.title}*{suffix}"))
+            if item.details:
+                lines.append(_rtl(f"      {item.details}"))
+
         lines.append("")
 
     return "\n".join(lines).rstrip()

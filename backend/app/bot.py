@@ -79,7 +79,12 @@ from app.services.signup_control import (
     pending_requests,
     rejection_reason,
 )
-from app.services.plan_view import active_plans, cancel_plan, discipline_label, format_plan
+from app.services.plan_view import (
+    active_plans,
+    cancel_plan,
+    discipline_label,
+    format_upcoming_week,
+)
 from app.services.usage_limits import QuotaExceeded, check_quota
 from app.services.activity_view import (
     activity_type_counts,
@@ -136,6 +141,8 @@ BTN_RECOVERY = "🔋 התאוששות"
 BTN_WEEK = "📅 השבוע שלי"
 BTN_METRICS = "📊 סיכום מלא"
 BTN_SYNC = "🔄 סנכרון"
+BTN_PLAN = "📋 התוכנית שלי"
+BTN_PLAN_DELETE = "🗑 מחיקת תוכנית"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
 BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
@@ -145,8 +152,13 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_HEART, BTN_STEPS],
         [BTN_SLEEP, BTN_ACTIVITIES],
         [BTN_RECOVERY, BTN_WEEK],
-        [BTN_METRICS, BTN_SYNC],
-        [BTN_COACH, BTN_SETTINGS],
+        [BTN_PLAN, BTN_METRICS],
+        [BTN_SYNC, BTN_COACH],
+        # Deliberately not beside 📋 התוכנית שלי: a destructive button
+        # adjacent to the one people press constantly is a mis-tap waiting
+        # to happen, and the two-tap confirmation should not be the only
+        # thing standing between a stray thumb and a deleted plan.
+        [BTN_PLAN_DELETE, BTN_SETTINGS],
     ],
     resize_keyboard=True,
 )
@@ -178,7 +190,6 @@ def _summary_hour_keyboard() -> InlineKeyboardMarkup:
 def _settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📋 התוכנית שלי", callback_data="settings:plans")],
             [InlineKeyboardButton("🔔 שינוי שעת הסיכום היומי", callback_data="settings:summary_hour")],
             [InlineKeyboardButton("🔌 ניתוק זמני (הנתונים נשמרים)", callback_data="settings:unlink")],
             [InlineKeyboardButton("🗑 מחיקת המשתמש והנתונים", callback_data="settings:delete")],
@@ -760,6 +771,71 @@ async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("🔄 מסנכרן מול גרמין… אשלח לך את המדדים המעודכנים בעוד כמה שניות.")
 
 
+async def show_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """The coming week, straight from the database - no Claude, no tokens."""
+    user_id = await _require_active(update)
+    if user_id is None:
+        return
+
+    with Session(engine) as session:
+        text = format_upcoming_week(session, user_id)
+
+    if not text:
+        await update.message.reply_text(
+            "אין לך תוכנית אימונים כרגע.\n\n"
+            "לחץ על 💬 שיחה עם המאמן ובקש שיבנה לך אחת 🙂",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+
+    await _reply(update, text, reply_markup=MAIN_KEYBOARD)
+
+
+async def delete_plan_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Asks which plan when there is more than one, and confirms either way.
+    Never deletes on the strength of this tap alone.
+    """
+    user_id = await _require_active(update)
+    if user_id is None:
+        return
+
+    with Session(engine) as session:
+        plans = [(p.discipline, discipline_label(p.discipline)) for p in active_plans(session, user_id)]
+
+    if not plans:
+        await update.message.reply_text("אין לך תוכנית אימונים למחוק.", reply_markup=MAIN_KEYBOARD)
+        return
+
+    if len(plans) == 1:
+        # One plan, so nothing to choose - go straight to the confirmation
+        # rather than making the user pick from a list of one.
+        discipline, label = plans[0]
+        await update.message.reply_text(
+            f"למחוק את תוכנית ה{label}?\n\nאי אפשר לשחזר.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("🗑 כן, מחק", callback_data=f"plancancel:confirm:{discipline}"),
+                        InlineKeyboardButton("ביטול", callback_data="plancancel:abort"),
+                    ]
+                ]
+            ),
+        )
+        return
+
+    await update.message.reply_text(
+        "איזו תוכנית למחוק?",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(f"🗑 {label}", callback_data=f"plancancel:{key}")]
+                for key, label in plans
+            ]
+            + [[InlineKeyboardButton("ביטול", callback_data="plancancel:abort")]]
+        ),
+    )
+
+
 async def show_activity_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     First level of the workouts browser: which kinds of training this user
@@ -979,32 +1055,6 @@ async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text(
             "🔔 באיזו שעה לשלוח את הסיכום היומי?",
             reply_markup=_summary_hour_keyboard(),
-        )
-        return
-
-    if action == "plans":
-        with Session(engine) as session:
-            user = _find_user(session, query.message.chat_id)
-            plans = active_plans(session, user.id) if user else []
-            rendered = [format_plan(session, p) for p in plans]
-            disciplines = [(p.discipline, discipline_label(p.discipline)) for p in plans]
-
-        if not plans:
-            await query.edit_message_text(
-                "אין לך תוכנית אימונים כרגע.\n\n"
-                "לחץ על 💬 שיחה עם המאמן ובקש שיבנה לך אחת."
-            )
-            return
-
-        await query.edit_message_text("\n\n".join(rendered), parse_mode="Markdown")
-        await query.message.chat.send_message(
-            "רוצה לבטל תוכנית?",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton(f"🗑 {label}", callback_data=f"plancancel:{key}")]
-                    for key, label in disciplines
-                ]
-            ),
         )
         return
 
@@ -1309,6 +1359,8 @@ def build_application() -> Application:
         (BTN_RECOVERY, _quick_lookup(format_recovery)),
         (BTN_WEEK, _quick_lookup(format_week)),
         (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
+        (BTN_PLAN, show_plan),
+        (BTN_PLAN_DELETE, delete_plan_menu),
         (BTN_SYNC, sync_now),
         (BTN_COACH, enter_chat_mode),
         (BTN_SETTINGS, show_settings),
