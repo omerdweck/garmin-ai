@@ -79,6 +79,7 @@ from app.services.signup_control import (
     pending_requests,
     rejection_reason,
 )
+from app.services.plan_view import active_plans, cancel_plan, discipline_label, format_plan
 from app.services.usage_limits import QuotaExceeded, check_quota
 from app.services.activity_view import (
     activity_type_counts,
@@ -177,6 +178,7 @@ def _summary_hour_keyboard() -> InlineKeyboardMarkup:
 def _settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
+            [InlineKeyboardButton("📋 התוכנית שלי", callback_data="settings:plans")],
             [InlineKeyboardButton("🔔 שינוי שעת הסיכום היומי", callback_data="settings:summary_hour")],
             [InlineKeyboardButton("🔌 ניתוק זמני (הנתונים נשמרים)", callback_data="settings:unlink")],
             [InlineKeyboardButton("🗑 מחיקת המשתמש והנתונים", callback_data="settings:delete")],
@@ -980,6 +982,32 @@ async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
+    if action == "plans":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            plans = active_plans(session, user.id) if user else []
+            rendered = [format_plan(session, p) for p in plans]
+            disciplines = [(p.discipline, discipline_label(p.discipline)) for p in plans]
+
+        if not plans:
+            await query.edit_message_text(
+                "אין לך תוכנית אימונים כרגע.\n\n"
+                "לחץ על 💬 שיחה עם המאמן ובקש שיבנה לך אחת."
+            )
+            return
+
+        await query.edit_message_text("\n\n".join(rendered), parse_mode="Markdown")
+        await query.message.chat.send_message(
+            "רוצה לבטל תוכנית?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(f"🗑 {label}", callback_data=f"plancancel:{key}")]
+                    for key, label in disciplines
+                ]
+            ),
+        )
+        return
+
     if action == "unlink":
         with Session(engine) as session:
             user = _find_user(session, query.message.chat_id)
@@ -1016,6 +1044,49 @@ async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 ]
             ),
         )
+
+
+async def on_plan_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Two taps to cancel: a plan is work the user did with the coach, and a
+    single mis-tap losing it would be the same mistake the account-deletion
+    button already avoids.
+    """
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+
+    if len(parts) == 2:
+        discipline = parts[1]
+        await query.edit_message_text(
+            f"למחוק את תוכנית ה{discipline_label(discipline)}?\n\nאי אפשר לשחזר.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("🗑 כן, מחק", callback_data=f"plancancel:confirm:{discipline}"),
+                        InlineKeyboardButton("ביטול", callback_data="plancancel:abort"),
+                    ]
+                ]
+            ),
+        )
+        return
+
+    if parts[1] == "abort":
+        await query.edit_message_text("לא בוטל כלום 👍")
+        return
+
+    discipline = parts[2]
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        # Scoped by user id as well as discipline: the callback data naming
+        # the plan comes from the client and must not be the only thing
+        # deciding whose row gets deleted.
+        removed = cancel_plan(session, user.id, discipline) if user else False
+
+    await query.edit_message_text(
+        f"🗑 תוכנית ה{discipline_label(discipline)} בוטלה." if removed
+        else "לא נמצאה תוכנית לביטול."
+    )
 
 
 async def on_account_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1247,6 +1318,7 @@ def build_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
+    application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
     application.add_handler(CallbackQueryHandler(on_account_action, pattern=r"^account:"))
     # Outside the conversation on purpose: approval arrives out of band,
     # minutes or hours later, so neither side can be held in a state.

@@ -1,0 +1,97 @@
+"""
+Reading and cancelling training plans without involving Claude.
+
+Same principle as metrics_view: the plan is already stored exactly, so
+showing it or deleting it costs nothing and should never spend a token.
+Claude is for building and revising a plan - not for reciting one.
+"""
+
+from sqlmodel import Session, col, delete, select
+
+from app.models.plan_session import DAY_NAMES_HE, PlanSession
+from app.models.training_plan import TrainingPlan
+
+RLM = "‏"
+
+DISCIPLINE_LABELS = {
+    "running": "🏃 ריצה",
+    "swimming": "🏊 שחייה",
+    "cycling": "🚴 אופניים",
+    "strength": "🏋️ כוח",
+    "general": "💪 כללי",
+}
+
+
+def _rtl(text: str) -> str:
+    return f"{RLM}{text}"
+
+
+def discipline_label(discipline: str) -> str:
+    return DISCIPLINE_LABELS.get(discipline, discipline)
+
+
+def active_plans(session: Session, user_id: int) -> list[TrainingPlan]:
+    return list(
+        session.exec(select(TrainingPlan).where(TrainingPlan.user_id == user_id)).all()
+    )
+
+
+def format_plan(session: Session, plan: TrainingPlan) -> str:
+    """The week, day by day - the same shape the coach presents when it builds one."""
+    sessions = session.exec(
+        select(PlanSession)
+        .where(PlanSession.plan_id == plan.id)
+        .order_by(col(PlanSession.day_of_week))
+    ).all()
+
+    lines = [_rtl(f"📋 *{discipline_label(plan.discipline)}*"), ""]
+
+    if not sessions:
+        # A plan saved before structured weeks existed, or one the coach
+        # wrote without a schedule. Show the prose rather than nothing.
+        lines.append(_rtl(plan.plan))
+        return "\n".join(lines)
+
+    for item in sessions:
+        day = DAY_NAMES_HE[item.day_of_week]
+        if item.is_rest:
+            lines.append(_rtl(f"*{day}* — {item.title} 😴"))
+        else:
+            targets = []
+            if item.target_distance_km:
+                targets.append(f"{item.target_distance_km:g} ק\"מ")
+            if item.target_duration_minutes:
+                targets.append(f"{item.target_duration_minutes} דק'")
+            if item.target_pace:
+                targets.append(item.target_pace)
+            suffix = f" · {' · '.join(targets)}" if targets else ""
+            lines.append(_rtl(f"*{day}* — {item.title}{suffix}"))
+            if item.details:
+                lines.append(_rtl(f"   {item.details}"))
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def cancel_plan(session: Session, user_id: int, discipline: str) -> bool:
+    """
+    Removes one discipline's plan and its week. Scoped to user_id as well as
+    discipline: the callback data naming the plan arrives from the client,
+    so it must never be the only thing deciding whose row is deleted.
+
+    Sessions go first - they hold a foreign key to the plan and there is no
+    ON DELETE CASCADE behind them.
+    """
+    plan = session.exec(
+        select(TrainingPlan).where(
+            TrainingPlan.user_id == user_id,
+            TrainingPlan.discipline == discipline,
+        )
+    ).first()
+    if plan is None:
+        return False
+
+    session.exec(delete(PlanSession).where(PlanSession.plan_id == plan.id))
+    session.delete(plan)
+    session.commit()
+    return True
