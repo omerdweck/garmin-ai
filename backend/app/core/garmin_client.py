@@ -38,6 +38,7 @@ __all__ = [
     "get_activities",
     "get_exercise_sets",
     "get_watch_last_upload",
+    "get_training_load",
 ]
 
 
@@ -130,6 +131,73 @@ def get_max_metrics(session: Garmin, date: str) -> list[dict]:
 def get_activities(session: Garmin, start: int = 0, limit: int = 20) -> list[dict]:
     """Most recent activities first. start/limit are for pagination through history."""
     return session.get_activities(start, limit)
+
+
+def _newest_device_entry(device_map: dict) -> dict:
+    """
+    Garmin keys these payloads by device id, because a person can own more
+    than one watch. Pick the most recently written entry rather than an
+    arbitrary one, so a second device that synced days ago cannot shadow the
+    watch actually in use.
+    """
+    if not device_map:
+        return {}
+    return max(device_map.values(), key=lambda d: (d or {}).get("timestamp") or 0)
+
+
+def get_training_load(session: Garmin, date: str) -> dict:
+    """
+    Garmin's own training-load and readiness figures for one day.
+
+    Read rather than computed. An acute:chronic ratio derived from our stored
+    activity durations would be a worse version of a number Garmin already
+    produces from sensor data we never see, using algorithms with years of
+    validation behind them.
+
+    Verified to be genuinely per-date, not "most recent" repeated: acute load
+    varies day to day and readiness varies with it. Chronic load looks static
+    within a month because it is a 28-day average - it does move across a
+    longer span. That mattered before writing this, because an endpoint that
+    quietly returned today's value for every date would have stamped one
+    number across a whole backfill and called it history.
+
+    Returns {} on any failure, and never raises. This is supplementary
+    context; losing it must not fail a sync that is otherwise fine - including
+    when Garmin throttles these two extra calls but not the core ones.
+    """
+    try:
+        result: dict = {}
+
+        status = session.get_training_status(date) or {}
+
+        recent = (status.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData") or {}
+        device = _newest_device_entry(recent)
+        load = device.get("acuteTrainingLoadDTO") or {}
+        result["acute_load"] = load.get("dailyTrainingLoadAcute")
+        result["chronic_load"] = load.get("dailyTrainingLoadChronic")
+        # The phrase, not the numeric trainingStatus: "RECOVERY_2" carries
+        # meaning a bare 5 does not, and it is what Claude can reason about.
+        result["training_status"] = device.get("trainingStatusFeedbackPhrase")
+
+        balance = (status.get("mostRecentTrainingLoadBalance") or {}).get(
+            "metricsTrainingLoadBalanceDTOMap"
+        ) or {}
+        result["load_balance"] = _newest_device_entry(balance).get("trainingBalanceFeedbackPhrase")
+
+        # A list of snapshots taken through the day, so the last one written
+        # is the current state - taking [0] would depend on an ordering
+        # Garmin never promised.
+        readiness = session.get_training_readiness(date) or []
+        if isinstance(readiness, list) and readiness:
+            latest = max(readiness, key=lambda r: (r or {}).get("timestamp") or "")
+            result["readiness_score"] = latest.get("score")
+            result["readiness_level"] = latest.get("level")
+            result["recovery_time_minutes"] = latest.get("recoveryTime")
+
+        return result
+    except Exception:
+        logger.debug("could not read training load for %s", date, exc_info=True)
+        return {}
 
 
 def get_watch_last_upload(session: Garmin) -> Optional[datetime]:

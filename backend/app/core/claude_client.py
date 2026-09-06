@@ -165,7 +165,13 @@ TOOLS = [
             "stages, resting/min/max heart rate, HRV, VO2 max, stress, Body Battery, steps, "
             "calories and intensity minutes. Returns one entry per day, most recent first. "
             "Days the watch wasn't worn are missing or have null fields. Use this for any question "
-            "about how the user is feeling, recovering, sleeping, or trending."
+            "about how the user is feeling, recovering, sleeping, or trending.\n\n"
+            "Also includes Garmin's own training-load figures, which are the best answer to 'am I "
+            "doing too much / too little': training_load_acute_7d against training_load_chronic_28d "
+            "(acute well below chronic means detraining, well above means a hard block), plus "
+            "training_status, load_balance, readiness_score (0-100), readiness_level and "
+            "recovery_time_minutes. Always prefer these over counting workouts yourself - they come "
+            "from sensor data and are calibrated to this individual."
         ),
         "input_schema": {
             "type": "object",
@@ -305,6 +311,17 @@ def _metric_to_dict(metric: DailyMetric) -> dict:
         "body_battery_high": metric.body_battery_high,
         "body_battery_low": metric.body_battery_low,
         "intensity_minutes": (metric.moderate_intensity_minutes or 0) + (metric.vigorous_intensity_minutes or 0),
+        # Garmin's own load figures. acute is ~7 days, chronic ~28, and the
+        # ratio between them is what makes a week heavy or light *for this
+        # person* - the same 300 means overreaching for one user and a taper
+        # for another, which raw distance and duration cannot express.
+        "training_load_acute_7d": metric.training_load_acute,
+        "training_load_chronic_28d": metric.training_load_chronic,
+        "training_status": metric.training_status,
+        "load_balance": metric.load_balance,
+        "readiness_score": metric.training_readiness_score,
+        "readiness_level": metric.training_readiness_level,
+        "recovery_time_minutes": metric.recovery_time_minutes,
     }
     # Dropping nulls keeps tool results small and stops the model from
     # reading "sleep_minutes: null" as "slept 0 hours".

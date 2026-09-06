@@ -339,9 +339,80 @@ def format_recovery(session: Session, user_id: int) -> str:
     if vo2 is not None:
         lines.append(_rtl(f"🫁 VO₂ max — *{vo2:.1f}*{_date_note(vo2_date, metrics[0].date)}"))
 
+    load_lines = _training_load_lines(metrics)
+    if load_lines:
+        lines += ["", _rtl("*עומס אימונים*")] + load_lines
+
     if len(lines) == 2:
         return NO_DATA
     return "\n".join(lines)
+
+
+# Garmin's readiness bands, and its training-status feedback constants. Only
+# the phrases actually seen in practice are mapped; anything unmapped falls
+# through as the raw constant rather than being hidden, so a new one shows up
+# as something to add instead of silently disappearing.
+READINESS_LABELS = {
+    "VERY_LOW": "נמוכה מאוד",
+    "LOW": "נמוכה",
+    "MODERATE": "בינונית",
+    "HIGH": "גבוהה",
+    "VERY_HIGH": "גבוהה מאוד",
+}
+
+TRAINING_STATUS_LABELS = {
+    "RECOVERY": "התאוששות",
+    "RECOVERY_1": "התאוששות",
+    "RECOVERY_2": "התאוששות",
+    "MAINTAINING": "שמירה על הכושר",
+    "PRODUCTIVE": "מתקדם",
+    "PEAKING": "בשיא",
+    "OVERREACHING": "עומס יתר",
+    "UNPRODUCTIVE": "לא אפקטיבי",
+    "DETRAINING": "ירידה בכושר",
+    "STRAINED": "מאומץ",
+    "NO_STATUS": "אין נתון",
+}
+
+
+def _training_load_lines(metrics: list[DailyMetric]) -> list[str]:
+    """
+    Acute against chronic load, with the comparison spelled out.
+
+    The two numbers alone mean nothing to a reader - 112 is only meaningful
+    next to 219. Stating the direction is the entire value of showing them.
+    """
+    lines: list[str] = []
+
+    acute, _ = _latest_value(metrics, "training_load_acute")
+    chronic, _ = _latest_value(metrics, "training_load_chronic")
+    if acute is not None and chronic:
+        ratio = acute / chronic
+        if ratio < 0.8:
+            verdict = "מתחת לרגיל"
+        elif ratio > 1.3:
+            verdict = "מעל הרגיל"
+        else:
+            verdict = "בטווח הרגיל"
+        lines.append(_rtl(f"📈 השבוע — *{acute}* מול בסיס *{chronic}* · {verdict}"))
+
+    status, _ = _latest_value(metrics, "training_status")
+    if status:
+        lines.append(_rtl(f"🎯 מצב אימון — *{TRAINING_STATUS_LABELS.get(status, status)}*"))
+
+    score, _ = _latest_value(metrics, "training_readiness_score")
+    if score is not None:
+        level, _ = _latest_value(metrics, "training_readiness_level")
+        label = f" · {READINESS_LABELS.get(level, level)}" if level else ""
+        lines.append(_rtl(f"⚡ מוכנות לאימון — *{score}/100*{label}"))
+
+    recovery, _ = _latest_value(metrics, "recovery_time_minutes")
+    if recovery:
+        hours = recovery // 60
+        text = f"{hours} שעות" if hours >= 2 else ("שעה" if hours == 1 else f"{recovery} דקות")
+        lines.append(_rtl(f"🛌 זמן התאוששות מומלץ — *{text}*"))
+
+    return lines
 
 
 def format_week(session: Session, user_id: int) -> str:

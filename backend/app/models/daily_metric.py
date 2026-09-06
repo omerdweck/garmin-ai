@@ -64,6 +64,26 @@ class DailyMetric(SQLModel, table=True):
     vo2_max: Optional[float] = None
     fitness_age: Optional[int] = None
 
+    # Garmin's own training-load figures, read rather than derived from the
+    # activities we store - see get_training_load in app/core/garmin_client.py
+    # for why. Acute is roughly a 7-day load, chronic roughly a 28-day one;
+    # the ratio between them is the whole point, since it says whether the
+    # last week was heavy or light *for this person* rather than in absolute
+    # terms. All nullable: these come from two extra API calls that are
+    # allowed to fail without failing the sync.
+    training_load_acute: Optional[int] = None
+    training_load_chronic: Optional[int] = None
+
+    # Feedback phrases rather than the numeric codes beside them:
+    # "RECOVERY_2" and "AEROBIC_HIGH_SHORTAGE" mean something on their own,
+    # which a bare 5 does not - and it is text the coach can reason about.
+    training_status: Optional[str] = None
+    load_balance: Optional[str] = None
+
+    training_readiness_score: Optional[int] = None
+    training_readiness_level: Optional[str] = None
+    recovery_time_minutes: Optional[int] = None
+
     # Full raw responses from all three calls, keyed by source
     # ({"summary": ..., "sleep": ..., "hrv": ...}) - lets us backfill new
     # structured columns later without re-fetching from Garmin.

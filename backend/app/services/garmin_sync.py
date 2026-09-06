@@ -23,6 +23,7 @@ from app.core.garmin_client import (
     get_hrv_data,
     get_max_metrics,
     get_sleep_data,
+    get_training_load,
     get_watch_last_upload,
     resume_garmin_session,
 )
@@ -47,6 +48,12 @@ def _fetch_daily_payload(garmin_session: Garmin, date_str: str) -> dict:
         "sleep": get_sleep_data(garmin_session, date_str),
         "hrv": get_hrv_data(garmin_session, date_str),
         "max_metrics": get_max_metrics(garmin_session, date_str),
+        # Two extra calls per day, which is a 50% increase in requests
+        # against an API that rate-limits by IP. Worth it: this is the only
+        # data that says whether a week was heavy or light *for this
+        # person*, and get_training_load returns {} rather than raising if
+        # Garmin throttles it, so the core metrics still land.
+        "training": get_training_load(garmin_session, date_str),
     }
 
 
@@ -55,6 +62,7 @@ def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, 
     sleep = payload["sleep"]
     hrv = payload["hrv"]
     max_metrics = payload["max_metrics"]
+    training = payload.get("training") or {}
 
     sleep_dto = sleep.get("dailySleepDTO") or {}
     hrv_summary = hrv.get("hrvSummary") or {}
@@ -100,7 +108,25 @@ def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, 
     if generic_max.get("fitnessAge") is not None:
         metric.fitness_age = generic_max.get("fitnessAge")
 
-    metric.raw_json = {"summary": summary, "sleep": sleep, "hrv": hrv, "max_metrics": max_metrics}
+    # Only overwrite when Garmin actually returned something: an empty
+    # `training` means the two extra calls failed, and blanking a value we
+    # already stored would turn a transient failure into lost history.
+    if training:
+        metric.training_load_acute = training.get("acute_load")
+        metric.training_load_chronic = training.get("chronic_load")
+        metric.training_status = training.get("training_status")
+        metric.load_balance = training.get("load_balance")
+        metric.training_readiness_score = training.get("readiness_score")
+        metric.training_readiness_level = training.get("readiness_level")
+        metric.recovery_time_minutes = training.get("recovery_time_minutes")
+
+    metric.raw_json = {
+        "summary": summary,
+        "sleep": sleep,
+        "hrv": hrv,
+        "max_metrics": max_metrics,
+        "training": training,
+    }
     metric.updated_at = datetime.now(timezone.utc)
 
     session.add(metric)
