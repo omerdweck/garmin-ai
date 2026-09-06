@@ -44,6 +44,13 @@ class User(SQLModel, table=True):
     # structure is actually needed.
     training_goal: Optional[str] = None
 
+    # Per-user override of settings.daily_message_limit. NULL means "use the
+    # global default" and 0 means "no coach access at all" - two distinct
+    # states that a plain integer with a 0 default could not express, and the
+    # difference matters: revoking one person's access must not look like a
+    # configuration that was never set.
+    daily_message_limit: Optional[int] = Field(default=None)
+
     # When the user accepted the terms of use. Recorded rather than a plain
     # boolean so there's an auditable "consented at this point in time" -
     # if the terms change, comparing against the revision date shows who

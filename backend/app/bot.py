@@ -63,6 +63,7 @@ from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
 from app.models.activity import Activity
+from app.services.usage_limits import QuotaExceeded, check_quota
 from app.services.activity_view import (
     activity_type_counts,
     format_activity_detail,
@@ -852,6 +853,9 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # sessions are not safe to share across threads.
         with Session(engine) as session:
             user = _find_user(session, chat_id)
+            # Before the call, not after: a ceiling enforced afterwards has
+            # already spent the money it exists to protect.
+            check_quota(session, user)
             return chat_with_coach(session, user, update.message.text)
 
     # Typing runs for as long as the answer takes. A single send_action
@@ -862,6 +866,17 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     typing = asyncio.create_task(_keep_typing(update.effective_chat))
     try:
         reply = await asyncio.to_thread(_run)
+    except QuotaExceeded as exc:
+        # Not an error: the ceiling did its job. Leave chat mode on so the
+        # user can keep the thread when the window resets, and keep the menu
+        # attached - the free buttons genuinely still work, and saying so
+        # turns a refusal into a redirect.
+        logger.info("Quota reached for chat_id %s", chat_id)
+        await update.message.reply_text(
+            exc.message,
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
     except ClaudeNotConfiguredError:
         context.user_data[CHAT_MODE_KEY] = False
         await update.message.reply_text(

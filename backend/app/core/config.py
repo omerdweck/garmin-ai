@@ -86,6 +86,28 @@ class Settings(BaseSettings):
     def is_claude_configured(self) -> bool:
         return bool(self.anthropic_api_key)
 
+    # --- Per-user limits on Claude usage ---------------------------------
+    # Two ceilings rather than one, because they catch different things: a
+    # message cap stops compulsive back-and-forth, a cost cap stops the small
+    # number of very long, tool-heavy conversations that a message count
+    # would wave through. Both are per user; the quick-lookup buttons make no
+    # API call at all and are deliberately never limited.
+    #
+    # 30/day is generous on purpose - measured at ~1.7 cents a turn, a
+    # realistic day is 3-5 messages, so this only bites on genuinely
+    # abnormal use rather than nagging ordinary users.
+    daily_message_limit: int = 30
+    monthly_cost_limit_usd: float = 3.0
+
+    # Chat id that receives admin notifications and may run /admin. Optional:
+    # without it the bot behaves exactly as before, just with no admin
+    # channel - the feature degrades rather than failing to boot.
+    admin_chat_id: Optional[int] = None
+
+    @property
+    def is_admin_configured(self) -> bool:
+        return self.admin_chat_id is not None
+
     @property
     def database_url(self) -> str:
         return (
