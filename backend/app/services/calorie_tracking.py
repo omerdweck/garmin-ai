@@ -13,6 +13,22 @@ The one judgement call worth stating: burn means Garmin's *total* daily
 expenditure, BMR included, not the calories attributed to workouts. Comparing
 a 2,000 kcal intake against a 400 kcal workout would report an enormous
 surplus every single day, which is worse than reporting nothing.
+
+DECIDED, do not "fix" this later: intake is *only* ever what the user typed.
+
+Garmin does expose a food log - get_nutrition_daily_meals and
+get_nutrition_daily_food_log - and reading it looks like an obvious
+improvement. It is not. That log is only populated by people who log food in
+Garmin Connect or sync a nutrition app into it, which is a small minority;
+checked against this deployment's own account it returns an empty list. The
+manual entry flow exists precisely because that data is usually absent.
+
+Mixing the two sources would also make a number nobody can explain: a day
+that is part typed and part imported, with no way for the user to tell which
+part is which or to correct the imported half. One source, one meaning.
+
+Burn is the opposite case and comes from Garmin, because a watch measures
+expenditure far better than a person estimates it.
 """
 
 import logging

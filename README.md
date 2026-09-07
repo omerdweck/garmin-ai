@@ -161,6 +161,12 @@ a missing row. A day with no burn figure has no balance rather than a zero. A
 manual workout's heart rate is NULL rather than a guess. In each case the
 alternative would have the system asserting something nobody measured.
 
+**One source per number.** Calorie intake is only ever what the user typed,
+even though Garmin exposes a food log — that log is empty for most people, and
+a figure that is part typed and part imported is one the user cannot explain
+or correct. Burn is the opposite case and comes from Garmin, because a watch
+measures expenditure better than a person estimates it.
+
 **Nothing the coach writes takes effect on its own.** Training plans wait for
 approval; calorie tracking does nothing until a target is set; a stale
 Garmin figure is never silently replaced by an estimate. The model proposes,
