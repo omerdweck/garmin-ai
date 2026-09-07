@@ -53,6 +53,28 @@ class User(SQLModel, table=True):
     # structure is actually needed.
     training_goal: Optional[str] = None
 
+    # --- Calorie tracking -------------------------------------------------
+    # NULL means the whole feature is off, which is what makes it opt-in
+    # without a separate boolean: no button prompts, no reminders, no calorie
+    # section in the daily summary, and the coach's tools report "not
+    # tracking". Everything else in the feature keys off this one field.
+    daily_calorie_target: Optional[int] = Field(default=None)
+
+    # Up to three whole hours (Asia/Jerusalem) at which to remind the user to
+    # log what they ate. Three columns rather than a table: the cap is three,
+    # the picker offers whole hours, and the hourly dispatcher already selects
+    # on an hour column - a join would buy nothing.
+    calorie_reminder_hour_1: Optional[int] = Field(default=None)
+    calorie_reminder_hour_2: Optional[int] = Field(default=None)
+    calorie_reminder_hour_3: Optional[int] = Field(default=None)
+
+    # When the user was last asked whether to stop tracking after a silent
+    # stretch. Compared against their last entry rather than against "now",
+    # so the question is asked once per episode of neglect and resets by
+    # itself the moment they log something - the same shape as
+    # watch_stale_notified_at on GarminAccount.
+    calorie_abandon_prompted_at: Optional[datetime] = Field(default=None)
+
     # Per-user override of settings.daily_message_limit. NULL means "use the
     # global default" and 0 means "no coach access at all" - two distinct
     # states that a plain integer with a 0 default could not express, and the

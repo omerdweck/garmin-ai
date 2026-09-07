@@ -79,8 +79,15 @@ def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, 
     metric.min_heart_rate = summary.get("minHeartRate")
     metric.max_heart_rate = summary.get("maxHeartRate")
     metric.steps = summary.get("totalSteps")
-    metric.total_calories = summary.get("totalKilocalories")
-    metric.active_calories = summary.get("activeKilocalories")
+    # Only overwrite when Garmin actually returned a value, the same rule the
+    # VO2 max and training blocks below already follow. These were assigned
+    # unconditionally, so re-syncing a day Garmin has nothing for blanked
+    # them - which would erase the burn side of a calorie balance the user
+    # had already been shown.
+    if summary.get("totalKilocalories") is not None:
+        metric.total_calories = summary.get("totalKilocalories")
+    if summary.get("activeKilocalories") is not None:
+        metric.active_calories = summary.get("activeKilocalories")
     metric.distance_meters = summary.get("totalDistanceMeters")
     metric.floors_climbed = summary.get("floorsAscended")
     metric.avg_stress_level = summary.get("averageStressLevel")
