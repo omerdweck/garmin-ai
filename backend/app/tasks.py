@@ -19,6 +19,7 @@ from app.core.claude_client import (
     ClaudeNotConfiguredError,
     ClaudeOutOfCreditError,
     generate_daily_summary,
+    generate_weekly_summary,
 )
 from app.core.config import settings
 from app.core.garmin_client import GarminAuthError, GarminRateLimitError
@@ -330,6 +331,63 @@ def dispatch_calorie_reminders() -> None:
 
     for index, user_id in enumerate(user_ids):
         send_calorie_reminder_task.apply_async(args=[user_id], countdown=index * 5)
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=300)
+def send_weekly_summary_task(self, user_id: int) -> None:
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None or user.telegram_chat_id is None:
+            return
+        try:
+            summary = generate_weekly_summary(session, user)
+        except (ClaudeNotConfiguredError, ClaudeAuthError, ClaudeOutOfCreditError) as exc:
+            # None of these improve by retrying - a missing key, a rejected
+            # one and an empty balance all need a human.
+            logger.warning("Weekly summary skipped for user %s - %s", user_id, type(exc).__name__)
+            return
+        except Exception as exc:
+            logger.exception("Weekly summary failed for user %s", user_id)
+            raise self.retry(exc=exc)
+
+        # None means the week was genuinely empty - better silence than a
+        # summary of nothing.
+        if summary:
+            send_telegram_message(user.telegram_chat_id, summary)
+
+
+@celery_app.task
+def dispatch_weekly_summaries() -> None:
+    """
+    Hourly, matching both the weekday and the hour.
+
+    Same static-schedule shape as the daily summaries: one beat entry
+    regardless of when individual users choose, because Beat wakes hourly
+    anyway and a per-user schedule would have to be rebuilt on every change.
+    """
+    if not settings.is_claude_configured:
+        logger.info("Skipping weekly summaries - ANTHROPIC_API_KEY is not configured")
+        return
+
+    now = datetime.now(LOCAL_TZ)
+    # isoweekday() is Monday=1..Sunday=7; % 7 gives Sunday=0, matching the
+    # week the rest of the app stores.
+    weekday = now.isoweekday() % 7
+
+    with Session(engine) as session:
+        user_ids = session.exec(
+            select(User.id)
+            .join(GarminAccount, GarminAccount.user_id == User.id)
+            .where(
+                User.weekly_summary_day == weekday,
+                User.weekly_summary_hour == now.hour,
+                User.telegram_chat_id.is_not(None),
+                GarminAccount.disconnected_at.is_(None),
+            )
+        ).all()
+
+    for index, user_id in enumerate(user_ids):
+        send_weekly_summary_task.apply_async(args=[user_id], countdown=index * 5)
 
 
 @celery_app.task

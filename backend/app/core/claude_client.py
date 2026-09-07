@@ -31,7 +31,11 @@ from app.services.calorie_tracking import (
     consumed_on,
     is_burn_provisional,
 )
-from app.core.claude_prompts import COACH_SYSTEM_PROMPT, DAILY_SUMMARY_SYSTEM_PROMPT
+from app.core.claude_prompts import (
+    COACH_SYSTEM_PROMPT,
+    DAILY_SUMMARY_SYSTEM_PROMPT,
+    WEEKLY_SUMMARY_SYSTEM_PROMPT,
+)
 from app.core.config import settings
 from app.models.activity import SOURCE_MANUAL, Activity
 from app.models.chat_message import ChatMessage
@@ -40,6 +44,7 @@ from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
 from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
+from app.services.weekly_report import build_weekly_facts, format_weekly_facts
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -989,3 +994,60 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     )
 
     return "".join(block.text for block in response.content if block.type == "text").strip() or None
+
+
+def generate_weekly_summary(session: Session, user: User) -> Optional[str]:
+    """
+    The weekly message: a computed facts table plus a short read of it.
+
+    The table is built in Python and never passes through the model - those
+    numbers are already exact, and paying tokens to have them retyped would
+    only introduce a chance of them coming back wrong. The model is given the
+    same facts as structured data and asked for the one thing a template
+    cannot produce: which of eight signals actually mattered this week, and
+    what they mean together.
+
+    Returns None when the week is empty, so the caller can stay quiet rather
+    than send a summary of nothing.
+    """
+    facts = build_weekly_facts(session, user.id)
+
+    week = facts["workouts"]["this_week"]
+    if not week["count"] and facts["steps"]["this_week"] in (None, 0):
+        return None
+
+    table = format_weekly_facts(facts)
+
+    client = _client()
+    response = _call_claude(
+        client,
+        session=session,
+        user_id=user.id,
+        kind="weekly_summary",
+        model=settings.claude_model,
+        max_tokens=500,
+        system=[
+            {
+                "type": "text",
+                "text": WEEKLY_SUMMARY_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "הנה נתוני השבוע. כתוב את פסקת הסיכום.\n"
+                    f"המטרה של המשתמש: {user.training_goal or 'לא הוגדרה'}\n\n"
+                    f"{json.dumps(facts, ensure_ascii=False)}"
+                ),
+            }
+        ],
+        # Medium, unlike the daily summary's low: connecting several weekly
+        # signals into one reading is the actual work here, where the daily
+        # message follows a template.
+        output_config={"effort": "medium"},
+    )
+
+    paragraph = "".join(b.text for b in response.content if b.type == "text").strip()
+    return f"{table}\n\n{paragraph}" if paragraph else table

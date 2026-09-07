@@ -53,6 +53,13 @@ class User(SQLModel, table=True):
     # structure is actually needed.
     training_goal: Optional[str] = None
 
+    # Day (0=Sunday) and hour for the weekly summary, or NULL for neither.
+    # Two columns rather than one because the week and the hour are chosen
+    # separately in the picker, and a combined value would have to be split
+    # again everywhere it is read.
+    weekly_summary_day: Optional[int] = Field(default=None)
+    weekly_summary_hour: Optional[int] = Field(default=None)
+
     # --- Calorie tracking -------------------------------------------------
     # NULL means the whole feature is off, which is what makes it opt-in
     # without a separate boolean: no button prompts, no reminders, no calorie

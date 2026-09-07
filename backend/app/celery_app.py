@@ -54,6 +54,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.dispatch_calorie_reminders",
         "schedule": crontab(minute=15),
     },
+    # Hourly at :25 - after the calorie reminders at :15 and the summaries
+    # at :05, so no two fan-outs land together.
+    "dispatch-weekly-summaries": {
+        "task": "app.tasks.dispatch_weekly_summaries",
+        "schedule": crontab(minute=25),
+    },
     "dispatch-daily-summaries": {
         "task": "app.tasks.dispatch_daily_summaries",
         "schedule": crontab(minute=5),

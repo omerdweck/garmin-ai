@@ -226,6 +226,7 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🔔 שינוי שעת הסיכום היומי", callback_data="settings:summary_hour")],
+            [InlineKeyboardButton("📅 סיכום שבועי", callback_data="weekly:menu")],
             [InlineKeyboardButton("🔌 ניתוק זמני (הנתונים נשמרים)", callback_data="settings:unlink")],
             [InlineKeyboardButton("🗑 מחיקת המשתמש והנתונים", callback_data="settings:delete")],
         ]
@@ -1731,6 +1732,89 @@ async def _calorie_settings(query) -> None:
     )
 
 
+WEEKLY_DAY_NAMES = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]
+WEEKLY_HOUR_CHOICES = [8, 10, 12, 18, 19, 20, 21]
+
+
+async def on_weekly_setting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Day first, then hour. Two steps rather than a grid: seven days times
+    seven hours is forty-nine buttons, which is a wall, and nobody picks an
+    hour without having decided a day.
+    """
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+
+    if parts[1] == "off":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            user.weekly_summary_day = None
+            user.weekly_summary_hour = None
+            session.add(user)
+            session.commit()
+        await query.edit_message_text("🔕 הסיכום השבועי כובה.")
+        return
+
+    if parts[1] == "day":
+        # Held in the callback data of the hour buttons rather than in
+        # user_data: the choice survives a bot restart between the two taps,
+        # and there is no draft left behind if the user walks away.
+        day = int(parts[2])
+        buttons = [
+            InlineKeyboardButton(f"{h:02d}:00", callback_data=f"weekly:set:{day}:{h}")
+            for h in WEEKLY_HOUR_CHOICES
+        ]
+        rows = [buttons[i : i + 4] for i in range(0, len(buttons), 4)]
+        rows.append([InlineKeyboardButton("⬅️ יום אחר", callback_data="weekly:menu")])
+        await query.edit_message_text(
+            f"📅 *יום {WEEKLY_DAY_NAMES[day]}* - באיזו שעה?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    if parts[1] == "set":
+        day, hour = int(parts[2]), int(parts[3])
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            user.weekly_summary_day = day
+            user.weekly_summary_hour = hour
+            session.add(user)
+            session.commit()
+        await query.edit_message_text(
+            f"✅ סיכום שבועי כל יום *{WEEKLY_DAY_NAMES[day]}* בשעה *{hour:02d}:00*",
+            parse_mode="Markdown",
+        )
+        return
+
+    # weekly:menu
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        current = (user.weekly_summary_day, user.weekly_summary_hour)
+
+    when = (
+        f"{WEEKLY_DAY_NAMES[current[0]]} ב-{current[1]:02d}:00"
+        if current[0] is not None and current[1] is not None
+        else "כבוי"
+    )
+    buttons = [
+        InlineKeyboardButton(name, callback_data=f"weekly:day:{i}")
+        for i, name in enumerate(WEEKLY_DAY_NAMES)
+    ]
+    rows = [buttons[i : i + 4] for i in range(0, len(buttons), 4)]
+    rows.append([InlineKeyboardButton("🔕 בלי סיכום שבועי", callback_data="weekly:off")])
+    await query.edit_message_text(
+        "📅 *סיכום שבועי*\n\n"
+        "טבלת מספרים של השבוע - אימונים, שינה, דופק מנוחה, עומס ועמידה בתוכנית, "
+        "בהשוואה לשבוע הקודם - ואחריה קריאה קצרה של המאמן.\n\n"
+        f"כרגע: *{when}*\n\n"
+        "באיזה יום לשלוח?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
 async def show_activity_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     First level of the workouts browser: which kinds of training this user
@@ -2287,6 +2371,7 @@ def build_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
+    application.add_handler(CallbackQueryHandler(on_weekly_setting, pattern=r"^weekly:"))
     # plancancel: before plan: - the narrower pattern has to win.
     application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
     application.add_handler(CallbackQueryHandler(on_plan_action, pattern=r"^plan:"))
