@@ -30,11 +30,23 @@ already produces from sensor data we never see. The ratio is what makes a
 week heavy or light *for that person* — the same 300 is overreaching for one
 user and a taper for another.
 
+**Manual workout entry** — for sessions done without the watch. Buttons for the
+common cases, typed input for everything else, stored in the same table as
+Garmin's own workouts with the fields it cannot know left NULL rather than
+guessed. The entry screen warns up front that this is only for workouts the
+watch did not record, because nothing merges a manual row with a Garmin one
+that arrives later.
+
 **An AI coach** — a real conversation. It calls tools to read the user's
 metrics, training load, workouts, goal and saved training plans, so its
 answers cite actual numbers rather than generalities. It remembers a stated
 goal ("sub-50 10K by December") and the plans it prescribes, across
 conversations.
+
+A plan the coach writes is a **proposal**, not a decision. It is stored
+inactive and enters tracking only when the user presses approve — so revising
+it during a conversation never disturbs the plan they are currently following,
+and the daily summary never announces a commitment nobody made.
 
 It is not, and does not present itself as, medical advice — the system prompt
 sends anything health-related to a professional rather than reasoning about
@@ -59,8 +71,8 @@ ago to be the real reason data looks stale.
 
 **A daily summary** — a short end-of-day message at an hour each user picks.
 
-**Owner controls** — invite-only signup, a user cap, per-user message and
-cost ceilings, and per-call cost accounting.
+**Owner controls** — signup by owner approval, a user cap, per-user message
+and cost ceilings, and per-call cost accounting.
 
 ---
 
@@ -73,7 +85,7 @@ Six containers, one `docker compose` stack:
 | `bot` | The Telegram bot (long polling). The product. |
 | `api` | FastAPI. Serves the paused website's auth/Garmin endpoints and `/health`. |
 | `worker` | Celery worker — Garmin syncs, backfills, daily summaries. |
-| `beat` | Celery scheduler — twice-daily sync, hourly summary dispatch. |
+| `beat` | Celery scheduler — twice-daily sync, hourly summary and calorie-reminder dispatch. |
 | `db` | PostgreSQL 16. Publishes no port. |
 | `redis` | Celery broker. Publishes no port. |
 
@@ -110,8 +122,12 @@ backend/app/
     garmin_sync.py    Pull from Garmin, upsert into our tables
     metrics_view.py   Format metrics for Telegram (no AI involved)
     activity_view.py  Format workouts, per type
+    manual_activity.py    Workouts entered by hand, and parsing what was typed
+    plan_view.py      Render, approve and delete training plans
+    calorie_tracking.py   Intake, burn, the balance and its sources
+    meal_plan_view.py Render and delete a meal plan
     account_lifecycle.py  Link / disconnect / delete
-    signup_control.py Invite code and user cap
+    signup_control.py Join requests, owner approval and the user cap
     usage_limits.py   Per-user quotas and the usage report
     admin_view.py     Owner-facing reports
   routers/            FastAPI endpoints (website, currently paused)
@@ -133,12 +149,22 @@ model never supplies or influences whose data is read. That is what makes one
 bot safe to run for many people.
 
 **All timestamps and uniqueness are per user.** `(user_id, date)`,
-`(user_id, garmin_activity_id)`, `(user_id, discipline)` — two people can
+`(user_id, garmin_activity_id)`, `(user_id, discipline, is_active)` — two people can
 even link the same Garmin account without colliding.
 
 **Garmin passwords are never stored.** They are used once to log in, then an
 encrypted session token is stored instead. The Telegram message containing
 the password is deleted from the chat immediately.
+
+**Absence is stored, never inferred.** A rest day is a row saying "rest", not
+a missing row. A day with no burn figure has no balance rather than a zero. A
+manual workout's heart rate is NULL rather than a guess. In each case the
+alternative would have the system asserting something nobody measured.
+
+**Nothing the coach writes takes effect on its own.** Training plans wait for
+approval; calorie tracking does nothing until a target is set; a stale
+Garmin figure is never silently replaced by an estimate. The model proposes,
+the user decides.
 
 **Claude's cached prefix is kept byte-stable.** The current date goes in the
 user turn, never the system prompt — a date inside the cached prefix would
@@ -240,11 +266,16 @@ your responsibility.
 
 **Built in:**
 
-- **Invite-only signup.** `INVITE_CODE` gates both paths that create a user.
-  Attempts are capped per conversation, and the code is compared in constant
-  time — `==` on strings leaks how much of the prefix was right.
-- **A hard user cap.** `MAX_USERS` is the backstop for when the code leaks,
-  which a string passed around a group chat eventually does.
+- **Signup by approval.** A newcomer taps "request access" and the owner
+  approves them by name, with their Telegram handle and numeric chat id shown
+  — the id being the part nobody can choose. This replaced a shared invite
+  code: a code forwarded in a group chat stops being a secret and the owner
+  never finds out, where an approval names the person before they are in.
+  A rejected request is not reopened by asking again.
+- **A hard user cap.** `MAX_USERS` is checked before a request is even sent,
+  and `/auth/register` on the paused website is closed outright — an
+  anonymous HTTP caller cannot obtain an approval, so leaving it open would
+  be a way around the only gate the design has.
 - **Per-user ceilings.** A daily message count and a monthly cost cap,
   checked *before* the API call. They catch different things: a message count
   stops compulsive back-and-forth, a cost cap stops the long tool-heavy
