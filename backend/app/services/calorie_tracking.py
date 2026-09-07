@@ -18,7 +18,7 @@ surplus every single day, which is worse than reporting nothing.
 import logging
 import re
 from datetime import date as date_type
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlmodel import Session, col, func, select
@@ -45,6 +45,13 @@ ABANDON_AFTER_DAYS = 5
 
 # How far back weekly_average_burn looks for a stand-in figure.
 AVERAGE_WINDOW_DAYS = 7
+
+# Before this hour, today's burn figure is treated as still accumulating and
+# the balance is labelled as provisional. Garmin's total for "today" grows
+# through the day, so at 11am it is a partial number - comparing a full day's
+# intake against it reports a surplus that exists only because the day is not
+# over. 21:00 is late enough that the remaining drift is small.
+BURN_SETTLED_HOUR = 21
 
 # Where a burn figure came from. The caller labels the number accordingly -
 # presenting an estimate as a measurement is the one thing this must not do.
@@ -274,6 +281,15 @@ SOURCE_LABELS = {
 }
 
 
+def is_burn_provisional(day: date_type, source: str) -> bool:
+    """True while today's Garmin figure is still accumulating."""
+    return (
+        day == date_type.today()
+        and source == SOURCE_GARMIN
+        and datetime.now().hour < BURN_SETTLED_HOUR
+    )
+
+
 def format_balance(session: Session, user_id: int, day: Optional[date_type] = None) -> str:
     """
     The 🍽 screen: what went in, what went out, and the gap between them.
@@ -316,6 +332,13 @@ def format_balance(session: Session, user_id: int, day: Optional[date_type] = No
             lines.append(_rtl(f"📈 עודף של *{balance:,}* קלוריות"))
         else:
             lines.append(_rtl("⚖️ מאוזן בדיוק"))
+
+        # Garmin's total for today keeps climbing until the day ends, so a
+        # balance read at noon compares a full day of eating against a
+        # part-day of burning and shows a surplus that is an artefact of the
+        # clock. Say so rather than let the number be read as final.
+        if is_burn_provisional(day, source):
+            lines.append(_rtl("_השריפה עדיין מצטברת - המאזן הסופי ייקבע בסוף היום._"))
 
     entries = entries_on(session, user_id, day)
     if entries:
