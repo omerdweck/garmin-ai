@@ -180,6 +180,15 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+# Every label on the persistent keyboard. Menu taps arrive as ordinary text
+# messages, so any handler that consumes plain text has to be able to tell
+# one apart from something the user typed.
+MENU_BUTTONS = {
+    BTN_HEART, BTN_STEPS, BTN_SLEEP, BTN_ACTIVITIES, BTN_RECOVERY, BTN_WEEK,
+    BTN_PLAN, BTN_METRICS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH,
+    BTN_SETTINGS, BTN_PLAN_DELETE, BTN_EXIT_CHAT,
+}
+
 # Shown only while in chat mode, so the way out is always one visible tap -
 # a mode with no obvious exit is a mode users get stuck in.
 CHAT_KEYBOARD = ReplyKeyboardMarkup([[BTN_EXIT_CHAT]], resize_keyboard=True)
@@ -1058,8 +1067,20 @@ async def on_manual_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not draft or not draft.get("awaiting"):
         return
 
-    field = draft["awaiting"]
     text = update.message.text
+
+    # A menu tap is a text message too. Without this the flow swallowed
+    # every button while waiting for a number, answered "I could not read
+    # that", and left the user with no way out but a slash command nobody
+    # thinks to try - the exact stuck mode this bot avoids everywhere else.
+    # Pressing a menu button is a clear enough "I am done here" to abandon
+    # the draft and let the button do what it says.
+    if text in MENU_BUTTONS:
+        context.user_data.pop(MANUAL_KEY, None)
+        logger.info("Manual entry abandoned via menu button by chat %s", update.effective_chat.id)
+        return
+
+    field = draft["awaiting"]
 
     if field == "duration":
         minutes = parse_duration(text)
@@ -1292,6 +1313,10 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     that re-sends it - and /start is the wrong tool once already linked.
     """
     context.user_data[CHAT_MODE_KEY] = False
+    # Also the escape hatch from a half-finished manual entry. Commands skip
+    # the text handler entirely, so without clearing the draft here it would
+    # sit in memory and swallow the next thing the user typed.
+    context.user_data.pop(MANUAL_KEY, None)
     await update.message.reply_text("👇 הנה התפריט", reply_markup=MAIN_KEYBOARD)
 
 
