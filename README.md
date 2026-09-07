@@ -40,6 +40,19 @@ It is not, and does not present itself as, medical advice — the system prompt
 sends anything health-related to a professional rather than reasoning about
 it.
 
+**Calorie tracking** — entirely optional, and off unless the user sets a
+target. Intake is logged by hand against Garmin's *total* daily expenditure,
+not workout calories: comparing a 2,000 kcal intake against a 400 kcal workout
+would report an enormous surplus every day. Up to three daily reminders, and an
+offer to stop tracking after five silent days rather than nagging someone who
+has given up. A day the watch was not worn has no balance and says so — the
+user can type the real figure or use their own weekly average, both labelled as
+such.
+
+**Personal meal plans** — 2-3 options per meal slot rather than a fixed weekly
+menu, because what is in the fridge decides. Tracked and revised like a
+training plan.
+
 **Automatic syncing** — twice daily, plus a manual button. Every sync reports
 when the *watch* last uploaded to Garmin, and warns when that was long enough
 ago to be the real reason data looks stale.
