@@ -175,6 +175,7 @@ BTN_METRICS = "📊 המדדים שלי"
 BTN_SYNC = "🔄 סנכרון"
 BTN_ADD_ACTIVITY = "➕ הוספת אימון"
 BTN_CALORIES = "🍽 קלוריות"
+BTN_RECORDS = "🏆 השיאים שלי"
 BTN_PLAN = "📋 התוכנית שלי"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
@@ -187,6 +188,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_PLAN, BTN_CALORIES],
         [BTN_ADD_ACTIVITY, BTN_SYNC],
         [BTN_COACH, BTN_SETTINGS],
+        [BTN_RECORDS],
     ],
     resize_keyboard=True,
 )
@@ -196,7 +198,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 # one apart from something the user typed.
 MENU_BUTTONS = {
     BTN_METRICS, BTN_ACTIVITIES, BTN_WEEK, BTN_RACES, BTN_PLAN, BTN_CALORIES,
-    BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT,
+    BTN_RECORDS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT,
 }
 
 # Shown only while in chat mode, so the way out is always one visible tap -
@@ -2374,6 +2376,7 @@ def build_application() -> Application:
 
     application.add_handler(CommandHandler("menu", show_menu))
     application.add_handler(CommandHandler("sync", sync_now))
+    application.add_handler(CommandHandler("records", _quick_lookup(format_records)))
     application.add_handler(CommandHandler("settings", show_settings))
     # Deliberately absent from set_my_commands below - see admin().
     application.add_handler(CommandHandler("admin", admin))
@@ -2386,6 +2389,7 @@ def build_application() -> Application:
         (BTN_ACTIVITIES, show_activity_types),
         (BTN_WEEK, _quick_lookup(format_week)),
         (BTN_RACES, _quick_lookup(format_race_predictions)),
+        (BTN_RECORDS, _quick_lookup(format_records)),
         (BTN_PLAN, show_plan),
         (BTN_ADD_ACTIVITY, add_activity_start),
         (BTN_CALORIES, show_calories),
