@@ -88,6 +88,15 @@ def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> N
     day from the scheduler.
     """
     with Session(engine) as session:
+        # Read before syncing so the message can tell "the watch uploaded
+        # something new" apart from "nothing has arrived since last time".
+        # Without that distinction a user who follows the instruction gets
+        # the identical warning back and concludes the bot is broken.
+        account_before = session.exec(
+            select(GarminAccount).where(GarminAccount.user_id == user_id)
+        ).first()
+        upload_before = account_before.watch_last_upload_at if account_before else None
+
         try:
             sync_user_garmin_data(session=session, user_id=user_id)
         except GarminRateLimitError as exc:
@@ -129,9 +138,15 @@ def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> N
         # to press sync is to see current data, so making the user tap a
         # second button for it is a pointless extra step. The watch line goes
         # first: if it is stale, it explains everything below it.
+        account_after = session.exec(
+            select(GarminAccount).where(GarminAccount.user_id == user_id)
+        ).first()
+        upload_after = account_after.watch_last_upload_at if account_after else None
+        nothing_new = upload_before is not None and upload_before == upload_after
+
         send_telegram_message(
             user.telegram_chat_id,
-            format_watch_sync_line(session, user_id)
+            format_watch_sync_line(session, user_id, unchanged_since_last_try=nothing_new)
             + "✅ *הסנכרון הושלם*\n\n"
             + format_metrics_snapshot(session, user_id),
         )

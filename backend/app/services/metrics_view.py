@@ -98,7 +98,7 @@ def _humanize_age(delta: timedelta) -> str:
     return f"לפני {days} ימים"
 
 
-def format_watch_sync_line(session: Session, user_id: int) -> str:
+def format_watch_sync_line(session: Session, user_id: int, unchanged_since_last_try: bool = False) -> str:
     """
     The header every sync report opens with: when the *watch* last uploaded
     to Garmin, and a warning when that was long enough ago to explain missing
@@ -124,15 +124,33 @@ def format_watch_sync_line(session: Session, user_id: int) -> str:
     age = datetime.now(timezone.utc) - stamp
     when = _humanize_age(age)
 
-    if age >= timedelta(hours=WATCH_STALE_HOURS):
+    if age < timedelta(hours=WATCH_STALE_HOURS):
+        return _rtl(f"⌚ השעון סונכרן {when}") + "\n\n"
+
+    if unchanged_since_last_try:
+        # The user did what the previous message asked and got the identical
+        # warning back, which reads as a broken bot. It is not: Garmin only
+        # has what the watch has sent it, and that upload can take minutes
+        # to arrive. Saying so is the difference between "this is stuck" and
+        # "this is waiting".
         return (
-            _rtl(f"⚠️ *השעון סונכרן {when}*")
+            _rtl(f"⏳ *עדיין לא הגיעו נתונים חדשים* (העלאה אחרונה {when})")
             + "\n"
-            + _rtl("פתח את אפליקציית Garmin Connect כדי לסנכרן את השעון, ואז לחץ סנכרון כאן שוב.")
+            + _rtl(
+                "אם בדיוק סנכרנת את השעון - זה יכול לקחת כמה דקות עד שגרמין מקבלים את הנתונים. "
+                "נסה שוב בעוד קצת."
+            )
             + "\n\n"
         )
 
-    return _rtl(f"⌚ השעון סונכרן {when}") + "\n\n"
+    return (
+        _rtl(f"⚠️ *השעון סונכרן {when}*")
+        + "\n"
+        + _rtl(
+            "פתח את אפליקציית Garmin Connect וסנכרן את השעון, המתן דקה, ואז לחץ סנכרון כאן שוב."
+        )
+        + "\n\n"
+    )
 
 
 def _format_minutes(minutes: Optional[int]) -> Optional[str]:
