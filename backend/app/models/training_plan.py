@@ -27,7 +27,15 @@ class TrainingPlan(SQLModel, table=True):
     # One current plan per discipline. Setting the same discipline again
     # replaces that plan and leaves the others untouched, which is what makes
     # "update my swim plan" safe when a running plan also exists.
-    __table_args__ = (UniqueConstraint("user_id", "discipline", name="uq_training_plan_user_discipline"),)
+    # is_active is part of the key so an approved plan and a proposal for the
+    # same discipline can coexist - which is the entire point of proposing
+    # one. Without it, the coach drafting a new running plan would collide
+    # with the running plan the user is currently following.
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "discipline", "is_active", name="uq_training_plan_user_discipline_active"
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
@@ -39,6 +47,13 @@ class TrainingPlan(SQLModel, table=True):
     discipline: str = Field(index=True)
 
     plan: str
+
+    # False while the coach has proposed a plan the user has not accepted yet.
+    # Until it is approved the plan exists but does not count: it is not shown
+    # as "your plan", the daily summary does not say what tomorrow holds from
+    # it, and adherence is not measured against it. Defaults True so every
+    # plan written before approval existed stays exactly as it was.
+    is_active: bool = Field(default=True, index=True)
 
     # When the plan was written. The coach needs this to tell a plan from
     # last week apart from one from two months ago - the older it is, the

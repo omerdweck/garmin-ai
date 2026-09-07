@@ -34,9 +34,68 @@ def discipline_label(discipline: str) -> str:
 
 
 def active_plans(session: Session, user_id: int) -> list[TrainingPlan]:
+    """Approved plans only - a proposal the user never accepted is not theirs."""
     return list(
-        session.exec(select(TrainingPlan).where(TrainingPlan.user_id == user_id)).all()
+        session.exec(
+            select(TrainingPlan).where(
+                TrainingPlan.user_id == user_id,
+                TrainingPlan.is_active == True,  # noqa: E712 - SQL comparison, not Python
+            )
+        ).all()
     )
+
+
+def pending_plans(session: Session, user_id: int) -> list[TrainingPlan]:
+    return list(
+        session.exec(
+            select(TrainingPlan).where(
+                TrainingPlan.user_id == user_id,
+                TrainingPlan.is_active == False,  # noqa: E712
+            )
+        ).all()
+    )
+
+
+def approve_plans(session: Session, user_id: int) -> int:
+    """
+    Accepts every pending proposal, replacing the approved plan for each
+    discipline it covers.
+
+    Replacing rather than accumulating: approving a new running plan means
+    the old running plan is gone, which is what "this is my plan now" means.
+    """
+    pending = pending_plans(session, user_id)
+    if not pending:
+        return 0
+
+    for proposal in pending:
+        superseded = session.exec(
+            select(TrainingPlan).where(
+                TrainingPlan.user_id == user_id,
+                TrainingPlan.discipline == proposal.discipline,
+                TrainingPlan.is_active == True,  # noqa: E712
+                TrainingPlan.id != proposal.id,
+            )
+        ).all()
+        for old in superseded:
+            session.exec(delete(PlanSession).where(PlanSession.plan_id == old.id))
+            session.delete(old)
+
+        proposal.is_active = True
+        session.add(proposal)
+
+    session.commit()
+    return len(pending)
+
+
+def discard_pending(session: Session, user_id: int) -> int:
+    """Throws away unapproved proposals, leaving the approved plan untouched."""
+    pending = pending_plans(session, user_id)
+    for proposal in pending:
+        session.exec(delete(PlanSession).where(PlanSession.plan_id == proposal.id))
+        session.delete(proposal)
+    session.commit()
+    return len(pending)
 
 
 def format_plan(session: Session, plan: TrainingPlan) -> str:

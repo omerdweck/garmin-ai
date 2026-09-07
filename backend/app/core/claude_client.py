@@ -533,6 +533,10 @@ def fetch_training_plans(session: Session, user_id: int) -> list[dict]:
             {
                 "discipline": plan.discipline,
                 "plan": plan.plan,
+                # A proposal the user has not accepted yet. The coach needs to
+                # know the difference: one is what they are doing, the other
+                # is what was suggested.
+                "status": "active" if plan.is_active else "awaiting_approval",
                 "updated_at": plan.updated_at.isoformat(),
                 "week": [
                     {
@@ -640,14 +644,23 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
 
     if name == "set_training_plan":
         discipline = tool_input.get("discipline")
+        # A proposal, not the user's plan. It stays inactive until they press
+        # approve, so revising it repeatedly during one conversation updates
+        # the same draft and never disturbs the plan they are following.
         existing = session.exec(
             select(TrainingPlan).where(
                 TrainingPlan.user_id == user.id,
                 TrainingPlan.discipline == discipline,
+                TrainingPlan.is_active == False,  # noqa: E712
             )
         ).first()
         if existing is None:
-            existing = TrainingPlan(user_id=user.id, discipline=discipline, plan=tool_input.get("plan"))
+            existing = TrainingPlan(
+                user_id=user.id,
+                discipline=discipline,
+                plan=tool_input.get("plan"),
+                is_active=False,
+            )
         else:
             existing.plan = tool_input.get("plan")
             existing.updated_at = datetime.now(timezone.utc)
@@ -794,11 +807,17 @@ def _store_message(session: Session, user_id: int, role: str, content: str) -> N
     session.commit()
 
 
-def chat_with_coach(session: Session, user: User, user_message: str) -> str:
+def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[str, set[str]]:
     """
     One conversational turn: replays recent history, lets Claude call data
-    tools as needed, persists both sides, and returns the reply text.
+    tools as needed, persists both sides, and returns the reply text plus the
+    names of the tools that ran.
+
+    The caller needs the tool names to know a training plan was proposed, so
+    it can offer the approve button. Inferring that from the reply text would
+    mean pattern-matching prose the model is free to word however it likes.
     """
+    tools_used: set[str] = set()
     client = _client()
 
     history = _load_history(session, user.id)
@@ -841,6 +860,10 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> str:
         for block in response.content:
             if block.type != "tool_use":
                 continue
+            # Recorded before the call, not after: the caller offers the
+            # approve button because a plan was *proposed*, and a tool that
+            # raised still changed nothing the user needs to approve.
+            tools_used.add(block.name)
             try:
                 result = _execute_tool(session, user, block.name, block.input)
             except Exception:
@@ -859,7 +882,7 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> str:
     _store_message(session, user.id, "user", user_message)
     _store_message(session, user.id, "assistant", reply)
 
-    return reply
+    return reply, tools_used
 
 
 def generate_daily_summary(session: Session, user: User) -> Optional[str]:
@@ -887,7 +910,9 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     # directly: Sunday 7 -> 0, Monday 1 -> 1, and so on.
     tomorrow_index = (today_date + timedelta(days=1)).isoweekday() % 7
 
-    plans = fetch_training_plans(session, user.id)
+    # Approved plans only: telling someone what they have tomorrow according
+    # to a plan they never accepted would be inventing a commitment.
+    plans = [p for p in fetch_training_plans(session, user.id) if p["status"] == "active"]
     tomorrow_sessions = [
         {"discipline": plan["discipline"], **item}
         for plan in plans

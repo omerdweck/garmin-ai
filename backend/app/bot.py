@@ -112,7 +112,9 @@ from app.services.calorie_tracking import (
 from app.services.meal_plan_view import delete_meal_plan, format_meal_plan
 from app.services.plan_view import (
     active_plans,
+    approve_plans,
     cancel_plan,
+    discard_pending,
     discipline_label,
     format_upcoming_week,
 )
@@ -175,7 +177,6 @@ BTN_SYNC = "🔄 סנכרון"
 BTN_ADD_ACTIVITY = "➕ הוספת אימון"
 BTN_CALORIES = "🍽 קלוריות"
 BTN_PLAN = "📋 התוכנית שלי"
-BTN_PLAN_DELETE = "🗑 מחיקת תוכנית"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
 BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
@@ -189,11 +190,6 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_CALORIES, BTN_ADD_ACTIVITY],
         [BTN_SYNC, BTN_COACH],
         [BTN_SETTINGS],
-        # Deliberately not beside 📋 התוכנית שלי: a destructive button
-        # adjacent to the one people press constantly is a mis-tap waiting
-        # to happen, and the two-tap confirmation should not be the only
-        # thing standing between a stray thumb and a deleted plan.
-        [BTN_PLAN_DELETE],
     ],
     resize_keyboard=True,
 )
@@ -204,7 +200,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 MENU_BUTTONS = {
     BTN_HEART, BTN_STEPS, BTN_SLEEP, BTN_ACTIVITIES, BTN_RECOVERY, BTN_WEEK,
     BTN_PLAN, BTN_METRICS, BTN_ADD_ACTIVITY, BTN_CALORIES, BTN_SYNC, BTN_COACH,
-    BTN_SETTINGS, BTN_PLAN_DELETE, BTN_EXIT_CHAT,
+    BTN_SETTINGS, BTN_EXIT_CHAT,
 }
 
 # Shown only while in chat mode, so the way out is always one visible tap -
@@ -816,23 +812,124 @@ async def sync_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def show_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """The coming week, straight from the database - no Claude, no tokens."""
+    """
+    The plan hub: what the week holds, and the two things you can do about
+    it. The delete action lives here rather than on the main keyboard - a
+    destructive button sitting next to ones people press daily is a mis-tap
+    waiting to happen, and it belongs with the thing it destroys.
+    """
     user_id = await _require_active(update)
     if user_id is None:
         return
 
     with Session(engine) as session:
         text = format_upcoming_week(session, user_id)
+        has_plan = bool(text)
 
-    if not text:
+    rows = [[InlineKeyboardButton("✨ בניית תוכנית חדשה", callback_data="plan:new")]]
+    if has_plan:
+        rows.append([InlineKeyboardButton("🗑 מחיקת תוכנית", callback_data="plan:delete")])
+
+    if not has_plan:
         await update.message.reply_text(
-            "אין לך תוכנית אימונים כרגע.\n\n"
-            "לחץ על 💬 שיחה עם המאמן ובקש שיבנה לך אחת 🙂",
-            reply_markup=MAIN_KEYBOARD,
+            "📋 *אין לך תוכנית אימונים כרגע*\n\n"
+            "אפשר לבנות אחת בשיחה עם המאמן 👇",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
         )
         return
 
-    await _reply(update, text, reply_markup=MAIN_KEYBOARD)
+    await _reply(update, text)
+    await update.effective_chat.send_message(
+        "מה עכשיו?", reply_markup=InlineKeyboardMarkup(rows)
+    )
+
+
+async def on_plan_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """The plan hub's buttons."""
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split(":", 1)[1]
+
+    if action == "new":
+        # Entering chat mode from here rather than making the user find the
+        # coach button: they have already said what they want to do.
+        context.user_data[CHAT_MODE_KEY] = True
+        await query.edit_message_text(
+            "✨ *בניית תוכנית אימונים*\n\n"
+            "המאמן רואה את כל הנתונים שלך - האימונים האחרונים, עומס האימונים, "
+            "השינה, ההתאוששות והמטרה שהגדרת - ובונה לפיהם תוכנית שבועית מותאמת.\n\n"
+            "ספר לו מה אתה רוצה להשיג, וכמה פעמים בשבוע אתה יכול להתאמן. "
+            "אפשר לבקש שינויים עד שהתוכנית מתאימה לך.\n\n"
+            "*התוכנית תיכנס למעקב רק אחרי שתאשר אותה.*",
+            parse_mode="Markdown",
+        )
+        await query.message.chat.send_message(
+            "כתוב למאמן מה אתה רוצה 👇", reply_markup=CHAT_KEYBOARD
+        )
+        return
+
+    if action == "delete":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            plans = [(p.discipline, discipline_label(p.discipline)) for p in active_plans(session, user.id)]
+
+        if not plans:
+            await query.edit_message_text("אין תוכנית למחוק.")
+            return
+
+        if len(plans) == 1:
+            discipline, label = plans[0]
+            await query.edit_message_text(
+                f"למחוק את תוכנית ה{label}?\n\nאי אפשר לשחזר.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton("🗑 כן, מחק", callback_data=f"plancancel:confirm:{discipline}"),
+                            InlineKeyboardButton("ביטול", callback_data="plancancel:abort"),
+                        ]
+                    ]
+                ),
+            )
+            return
+
+        await query.edit_message_text(
+            "איזו תוכנית למחוק?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(f"🗑 {label}", callback_data=f"plancancel:{key}")]
+                    for key, label in plans
+                ]
+                + [[InlineKeyboardButton("ביטול", callback_data="plancancel:abort")]]
+            ),
+        )
+        return
+
+    if action == "approve":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            approved = approve_plans(session, user.id)
+            week = format_upcoming_week(session, user.id)
+        if not approved:
+            await query.edit_message_text("אין תוכנית שממתינה לאישור.")
+            return
+        await query.edit_message_text("✅ *התוכנית אושרה ונכנסה למעקב*", parse_mode="Markdown")
+        await _reply_plain(query.message.chat, week, reply_markup=MAIN_KEYBOARD)
+        return
+
+    if action == "discard":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            discard_pending(session, user.id)
+        await query.edit_message_text("התוכנית לא נשמרה. אפשר לבקש מהמאמן אחרת 🙂")
+        return
+
+
+async def _reply_plain(chat, text: str, **kwargs) -> None:
+    try:
+        await chat.send_message(text, parse_mode="Markdown", **kwargs)
+    except BadRequest:
+        await chat.send_message(text, **kwargs)
 
 
 async def delete_plan_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2004,7 +2101,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # feels like.
     typing = asyncio.create_task(_keep_typing(update.effective_chat))
     try:
-        reply = await asyncio.to_thread(_run)
+        reply, tools_used = await asyncio.to_thread(_run)
     except QuotaExceeded as exc:
         # Not an error: the ceiling did its job. Leave chat mode on so the
         # user can keep the thread when the window resets, and keep the menu
@@ -2064,6 +2161,25 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # long as the conversation runs.
     await _reply(update, reply, reply_markup=CHAT_KEYBOARD)
 
+    # A plan the coach just drafted is a proposal, not the user's plan. The
+    # approve button is what moves it into tracking - keyed off the tool
+    # actually having run rather than off anything in the reply text, which
+    # the model is free to word however it likes.
+    if "set_training_plan" in tools_used:
+        await update.effective_chat.send_message(
+            "התוכנית הזו עדיין *לא* נכנסה למעקב.\n"
+            "אפשר לבקש שינויים, או לאשר אותה 👇",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("✅ אישור התוכנית", callback_data="plan:approve"),
+                        InlineKeyboardButton("🗑 לא, תודה", callback_data="plan:discard"),
+                    ]
+                ]
+            ),
+        )
+
 
 def build_application() -> Application:
     application = Application.builder().token(settings.telegram_bot_token).build()
@@ -2099,7 +2215,6 @@ def build_application() -> Application:
         (BTN_WEEK, _quick_lookup(format_week)),
         (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
         (BTN_PLAN, show_plan),
-        (BTN_PLAN_DELETE, delete_plan_menu),
         (BTN_ADD_ACTIVITY, add_activity_start),
         (BTN_CALORIES, show_calories),
         (BTN_SYNC, sync_now),
@@ -2111,7 +2226,9 @@ def build_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
+    # plancancel: before plan: - the narrower pattern has to win.
     application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
+    application.add_handler(CallbackQueryHandler(on_plan_action, pattern=r"^plan:"))
     application.add_handler(CallbackQueryHandler(on_manual_step, pattern=r"^manual:"))
     # calrem: before cal: - the narrower pattern has to win, same as
     # acttype_menu before acttype below.
