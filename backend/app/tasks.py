@@ -33,6 +33,7 @@ from app.services.calorie_tracking import (
     days_since_last_entry,
 )
 from app.services.garmin_sync import sync_user_garmin_data
+from app.services.records import format_broken_records
 from app.services.metrics_view import (
     WATCH_STALE_HOURS,
     format_metrics_snapshot,
@@ -105,7 +106,7 @@ def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> N
         upload_before = account_before.watch_last_upload_at if account_before else None
 
         try:
-            sync_user_garmin_data(session=session, user_id=user_id)
+            broken_records = sync_user_garmin_data(session=session, user_id=user_id)
         except GarminRateLimitError as exc:
             user = session.get(User, user_id)
             if notify_on_success and user is not None and user.telegram_chat_id is not None:
@@ -132,6 +133,15 @@ def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> N
         user = session.get(User, user_id)
         if user is None or user.telegram_chat_id is None:
             return
+
+        # Before the notify_on_success split, deliberately: a new personal
+        # record is worth telling someone about whether they pressed sync or
+        # the scheduler found it. It is also self-limiting - it can only fire
+        # on the one run that first sees the better number, so it cannot
+        # become the twice-daily noise the silent-scheduled-run rule exists
+        # to prevent.
+        if broken_records:
+            send_telegram_message(user.telegram_chat_id, format_broken_records(broken_records))
 
         if not notify_on_success:
             # Scheduled run: normally silent. The one thing worth an
@@ -179,6 +189,8 @@ def backfill_user_history_task(self, user_id: int, days: int = BACKFILL_DAYS) ->
     """
     with Session(engine) as session:
         try:
+            # Return value ignored on purpose: on a first link every record
+            # is a first sight, which _apply_records stores without reporting.
             sync_user_garmin_data(
                 session=session,
                 user_id=user_id,

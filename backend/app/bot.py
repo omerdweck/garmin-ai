@@ -118,6 +118,7 @@ from app.services.plan_view import (
     discipline_label,
     format_upcoming_week,
 )
+from app.services.records import format_records
 from app.services.usage_limits import QuotaExceeded, check_quota
 from app.services.activity_view import (
     activity_type_counts,
@@ -1838,6 +1839,10 @@ async def show_activity_types(update: Update, context: ContextTypes.DEFAULT_TYPE
         [InlineKeyboardButton(f"{type_label(t)} ({n})", callback_data=f"acttype:{t}")]
         for t, n in counts
     ]
+    # Records live inside this screen rather than as an eleventh keyboard
+    # button: they are a fact *about* these workouts, and the main keyboard
+    # was deliberately cut to ten.
+    rows.append([InlineKeyboardButton("🏆 שיאים אישיים", callback_data="records")])
     await update.message.reply_text(
         "🏃 *האימונים שלך*\n\nבחר סוג אימון כדי לראות את הנתונים שלו 👇",
         parse_mode="Markdown",
@@ -1880,8 +1885,30 @@ async def on_activity_types_menu(update: Update, context: ContextTypes.DEFAULT_T
         [InlineKeyboardButton(f"{type_label(t)} ({n})", callback_data=f"acttype:{t}")]
         for t, n in counts
     ]
+    rows.append([InlineKeyboardButton("🏆 שיאים אישיים", callback_data="records")])
     await query.edit_message_text(
         "🏃 בחר סוג אימון 👇", reply_markup=InlineKeyboardMarkup(rows)
+    )
+
+
+async def on_records(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """The stored personal records, with a way back to the workouts list."""
+    query = update.callback_query
+    await query.answer()
+
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        if user is None:
+            await query.edit_message_text("שלח /start כדי להתחיל 👋")
+            return
+        text = format_records(session, user.id)
+
+    await query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ חזרה לאימונים", callback_data="acttype_menu")]]
+        ),
     )
 
 
@@ -2393,6 +2420,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(on_join_decision, pattern=r"^join_decide:"))
     # Ordered narrowest-first: "acttype_menu" would otherwise be swallowed
     # by the broader "acttype:" pattern.
+    application.add_handler(CallbackQueryHandler(on_records, pattern=r"^records$"))
     application.add_handler(CallbackQueryHandler(on_activity_types_menu, pattern=r"^acttype_menu$"))
     application.add_handler(CallbackQueryHandler(on_activity_type, pattern=r"^acttype:"))
     application.add_handler(CallbackQueryHandler(on_activity_detail, pattern=r"^act:"))

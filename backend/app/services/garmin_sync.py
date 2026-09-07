@@ -22,6 +22,7 @@ from app.core.garmin_client import (
     get_exercise_sets,
     get_hrv_data,
     get_max_metrics,
+    get_personal_records,
     get_race_predictions,
     get_sleep_data,
     get_training_load,
@@ -31,6 +32,7 @@ from app.core.garmin_client import (
 from app.models.activity import Activity
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
+from app.services.records import sync_personal_records
 
 
 def _seconds_to_minutes(seconds) -> int | None:
@@ -301,7 +303,7 @@ def sync_user_garmin_data(
     days_back: int = 2,
     pause_seconds: float = 0.0,
     activity_limit: int = 20,
-) -> None:
+) -> list:
     """
     Upserts daily_metric for today and the previous `days_back - 1` days
     (re-covering yesterday too by default, since Garmin sometimes
@@ -340,6 +342,13 @@ def sync_user_garmin_data(
 
         _sync_race_predictions(session, user_id, garmin_session, days_back)
         _sync_activities(session, user_id, garmin_session, limit=activity_limit)
+
+        # Last, and its result carried back to the caller: a broken record is
+        # the one thing in a sync worth an unprompted message, and only the
+        # caller knows whether this run is allowed to send one.
+        broken_records = sync_personal_records(
+            session, user_id, get_personal_records(garmin_session)
+        )
     except GarminRateLimitError as exc:
         # Transient - Garmin is throttling us right now, the stored
         # credentials are still fine. Keep the account, just record it.
@@ -362,3 +371,5 @@ def sync_user_garmin_data(
     account.last_sync_error = None
     session.add(account)
     session.commit()
+
+    return broken_records

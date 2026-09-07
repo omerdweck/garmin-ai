@@ -40,6 +40,7 @@ __all__ = [
     "get_watch_last_upload",
     "get_training_load",
     "get_race_predictions",
+    "get_personal_records",
 ]
 
 
@@ -235,6 +236,22 @@ def get_race_predictions(session: Garmin, start: str, end: str) -> dict:
     except Exception:
         logger.debug("could not read race predictions", exc_info=True)
         return {}
+
+
+def get_personal_records(session: Garmin) -> list:
+    """
+    Garmin's current personal records. No date argument - these are "the best
+    ever", not a per-day figure.
+
+    Returns [] on failure like the other supplementary readers: a missing
+    record list must not fail a sync that otherwise worked.
+    """
+    try:
+        records = session.get_personal_record()
+        return records if isinstance(records, list) else []
+    except Exception:
+        logger.debug("could not read personal records", exc_info=True)
+        return []
 
 
 def get_watch_last_upload(session: Garmin) -> Optional[datetime]:

@@ -13,6 +13,7 @@ from app.models.daily_metric import DailyMetric  # noqa: F401
 from app.models.garmin_account import GarminAccount  # noqa: F401
 from app.models.join_request import JoinRequest  # noqa: F401
 from app.models.meal_plan import MealOption, MealPlan  # noqa: F401
+from app.models.personal_record import PersonalRecord  # noqa: F401
 from app.models.plan_session import PlanSession  # noqa: F401
 from app.models.training_plan import TrainingPlan  # noqa: F401
 from app.models.usage_event import UsageEvent  # noqa: F401
