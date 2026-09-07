@@ -48,6 +48,12 @@ celery_app.conf.beat_schedule = {
     # hour - one static schedule entry regardless of how many different
     # times users pick. Runs at :05 so it lands just after the 20:00 sync
     # rather than racing it, giving the evening summary fresh data.
+    # Hourly at :15 - offset from the summaries at :05 so the two fan-outs
+    # never overlap, and away from the :00 syncs.
+    "dispatch-calorie-reminders": {
+        "task": "app.tasks.dispatch_calorie_reminders",
+        "schedule": crontab(minute=15),
+    },
     "dispatch-daily-summaries": {
         "task": "app.tasks.dispatch_daily_summaries",
         "schedule": crontab(minute=5),

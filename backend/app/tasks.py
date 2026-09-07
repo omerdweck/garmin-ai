@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.celery_app import celery_app
@@ -25,6 +26,11 @@ from app.core.telegram_client import send_telegram_message
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
+from app.services.calorie_tracking import (
+    ABANDON_AFTER_DAYS,
+    consumed_on,
+    days_since_last_entry,
+)
 from app.services.garmin_sync import sync_user_garmin_data
 from app.services.metrics_view import (
     WATCH_STALE_HOURS,
@@ -240,6 +246,90 @@ def send_daily_summary_task(self, user_id: int) -> None:
         # stay quiet than to send an empty-handed daily message.
         if summary:
             send_telegram_message(user.telegram_chat_id, summary)
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+def send_calorie_reminder_task(self, user_id: int) -> None:
+    """
+    One user's nudge to log what they ate - or, after a long enough silence,
+    the offer to stop being nudged.
+
+    The abandonment check lives here rather than in a separate job because
+    the two are mutually exclusive: someone who has not logged in five days
+    should be asked whether to stop, not reminded for the sixth time.
+    """
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None or user.telegram_chat_id is None:
+            return
+        if user.daily_calorie_target is None:
+            # Turned tracking off between the dispatch and now.
+            return
+
+        silent_days = days_since_last_entry(session, user.id)
+
+        if silent_days is not None and silent_days >= ABANDON_AFTER_DAYS:
+            # Asked once per episode, not once per reminder. Comparing the
+            # prompt against the last entry - the same shape as the stale
+            # watch warning - means the counter resets by itself the moment
+            # the user logs something again.
+            if user.calorie_abandon_prompted_at is not None:
+                return
+
+            send_telegram_message(
+                user.telegram_chat_id,
+                f"🍽 *לא רשמת קלוריות כבר {silent_days} ימים*\n\n"
+                "אם המעקב לא מסתדר לך - אפשר לכבות אותו, והרישומים יישמרו.\n"
+                "אם כן, פשוט תמשיך להזין ואפסיק לשאול 🙂\n\n"
+                "לכיבוי: 🍽 קלוריות ← ⚙️ הגדרות מעקב",
+            )
+            user.calorie_abandon_prompted_at = datetime.now(timezone.utc)
+            session.add(user)
+            session.commit()
+            return
+
+        consumed = consumed_on(session, user.id)
+        target = user.daily_calorie_target
+        if consumed:
+            body = (
+                f"🍽 עד עכשיו רשמת *{consumed:,}* מתוך *{target:,}* קלוריות.\n"
+                "אכלת עוד משהו? לחץ 🍽 קלוריות ← ➕ הוספת ארוחה"
+            )
+        else:
+            body = (
+                f"🍽 *תזכורת* - עוד לא רשמת קלוריות היום.\n"
+                f"היעד שלך: *{target:,}*\n\n"
+                "לחץ 🍽 קלוריות ← ➕ הוספת ארוחה"
+            )
+        send_telegram_message(user.telegram_chat_id, body)
+
+
+@celery_app.task
+def dispatch_calorie_reminders() -> None:
+    """
+    Hourly fan-out, same shape as dispatch_daily_summaries.
+
+    A user can have up to three reminder hours, so the same person may be
+    selected by three different hourly runs - which is the point, and is why
+    the hour is matched against any of the three columns rather than one.
+    """
+    current_hour = datetime.now(LOCAL_TZ).hour
+
+    with Session(engine) as session:
+        user_ids = session.exec(
+            select(User.id).where(
+                User.daily_calorie_target.is_not(None),
+                User.telegram_chat_id.is_not(None),
+                or_(
+                    User.calorie_reminder_hour_1 == current_hour,
+                    User.calorie_reminder_hour_2 == current_hour,
+                    User.calorie_reminder_hour_3 == current_hour,
+                ),
+            )
+        ).all()
+
+    for index, user_id in enumerate(user_ids):
+        send_calorie_reminder_task.apply_async(args=[user_id], countdown=index * 5)
 
 
 @celery_app.task
