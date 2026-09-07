@@ -22,6 +22,7 @@ from app.core.garmin_client import (
     get_exercise_sets,
     get_hrv_data,
     get_max_metrics,
+    get_race_predictions,
     get_sleep_data,
     get_training_load,
     get_watch_last_upload,
@@ -162,6 +163,50 @@ def _upsert_daily_metric(session: Session, user_id: int, target_date: date_type,
         session.commit()
 
 
+def _sync_race_predictions(
+    session: Session, user_id: int, garmin_session: Garmin, days_back: int
+) -> None:
+    """
+    One ranged call for the whole window, applied to the rows the day loop
+    just wrote.
+
+    Runs after those rows exist so it only ever updates - a prediction for a
+    day we hold no metrics for has nothing to attach to, and inventing a
+    DailyMetric row to carry it would put a row in the table for a day the
+    user's watch recorded nothing.
+    """
+    end = date_type.today()
+    start = end - timedelta(days=days_back - 1)
+    predictions = get_race_predictions(garmin_session, start.isoformat(), end.isoformat())
+    if not predictions:
+        return
+
+    rows = session.exec(
+        select(DailyMetric).where(
+            DailyMetric.user_id == user_id,
+            DailyMetric.date >= start,
+        )
+    ).all()
+
+    for metric in rows:
+        values = predictions.get(metric.date.isoformat())
+        if not values:
+            continue
+        # Only overwrite on a real value, the same rule the rest of the sync
+        # follows - a gap in Garmin's data must not erase what we hold.
+        if values.get("5k"):
+            metric.race_predict_5k_seconds = values["5k"]
+        if values.get("10k"):
+            metric.race_predict_10k_seconds = values["10k"]
+        if values.get("half"):
+            metric.race_predict_half_seconds = values["half"]
+        if values.get("marathon"):
+            metric.race_predict_marathon_seconds = values["marathon"]
+        session.add(metric)
+
+    session.commit()
+
+
 def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, limit: int = 20) -> None:
     for raw_activity in get_activities(garmin_session, 0, limit):
         garmin_activity_id = raw_activity.get("activityId")
@@ -293,6 +338,7 @@ def sync_user_garmin_data(
             if pause_seconds:
                 time.sleep(pause_seconds)
 
+        _sync_race_predictions(session, user_id, garmin_session, days_back)
         _sync_activities(session, user_id, garmin_session, limit=activity_limit)
     except GarminRateLimitError as exc:
         # Transient - Garmin is throttling us right now, the stored

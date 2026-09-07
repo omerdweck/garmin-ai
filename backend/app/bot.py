@@ -138,6 +138,7 @@ from app.services.account_lifecycle import (
 from app.services.garmin_sync import ensure_exercise_sets
 from app.services.metrics_view import (
     format_metrics_snapshot,
+    format_race_predictions,
     format_recovery,
     format_resting_heart_rate,
     format_sleep,
@@ -172,6 +173,7 @@ BTN_SLEEP = "😴 שינה"
 BTN_ACTIVITIES = "🏃 האימונים שלי"
 BTN_RECOVERY = "🔋 התאוששות"
 BTN_WEEK = "📅 השבוע שלי"
+BTN_RACES = "🏁 תחזיות זמנים"
 BTN_METRICS = "📊 סיכום מלא"
 BTN_SYNC = "🔄 סנכרון"
 BTN_ADD_ACTIVITY = "➕ הוספת אימון"
@@ -186,10 +188,10 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_HEART, BTN_STEPS],
         [BTN_SLEEP, BTN_ACTIVITIES],
         [BTN_RECOVERY, BTN_WEEK],
-        [BTN_PLAN, BTN_METRICS],
-        [BTN_CALORIES, BTN_ADD_ACTIVITY],
-        [BTN_SYNC, BTN_COACH],
-        [BTN_SETTINGS],
+        [BTN_RACES, BTN_PLAN],
+        [BTN_METRICS, BTN_CALORIES],
+        [BTN_ADD_ACTIVITY, BTN_SYNC],
+        [BTN_COACH, BTN_SETTINGS],
     ],
     resize_keyboard=True,
 )
@@ -199,7 +201,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 # one apart from something the user typed.
 MENU_BUTTONS = {
     BTN_HEART, BTN_STEPS, BTN_SLEEP, BTN_ACTIVITIES, BTN_RECOVERY, BTN_WEEK,
-    BTN_PLAN, BTN_METRICS, BTN_ADD_ACTIVITY, BTN_CALORIES, BTN_SYNC, BTN_COACH,
+    BTN_PLAN, BTN_METRICS, BTN_ADD_ACTIVITY, BTN_CALORIES, BTN_RACES, BTN_SYNC, BTN_COACH,
     BTN_SETTINGS, BTN_EXIT_CHAT,
 }
 
@@ -2213,6 +2215,7 @@ def build_application() -> Application:
         (BTN_ACTIVITIES, show_activity_types),
         (BTN_RECOVERY, _quick_lookup(format_recovery)),
         (BTN_WEEK, _quick_lookup(format_week)),
+        (BTN_RACES, _quick_lookup(format_race_predictions)),
         (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
         (BTN_PLAN, show_plan),
         (BTN_ADD_ACTIVITY, add_activity_start),

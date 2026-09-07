@@ -80,6 +80,15 @@ class DailyMetric(SQLModel, table=True):
     training_status: Optional[str] = None
     load_balance: Optional[str] = None
 
+    # Garmin's predicted finish times, in seconds. Stored per day rather than
+    # as a single current value because the movement is the point: a 10K
+    # prediction drifting a minute slower over two months is evidence of
+    # detraining that no single reading shows.
+    race_predict_5k_seconds: Optional[int] = None
+    race_predict_10k_seconds: Optional[int] = None
+    race_predict_half_seconds: Optional[int] = None
+    race_predict_marathon_seconds: Optional[int] = None
+
     training_readiness_score: Optional[int] = None
     training_readiness_level: Optional[str] = None
     recovery_time_minutes: Optional[int] = None

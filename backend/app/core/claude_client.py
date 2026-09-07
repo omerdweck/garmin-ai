@@ -178,7 +178,13 @@ TOOLS = [
             "(acute well below chronic means detraining, well above means a hard block), plus "
             "training_status, load_balance, readiness_score (0-100), readiness_level and "
             "recovery_time_minutes. Always prefer these over counting workouts yourself - they come "
-            "from sensor data and are calibrated to this individual."
+            "from sensor data and are calibrated to this individual.\n\n"
+            "Also includes Garmin's predicted race finish times in seconds "
+            "(race_predict_5k_seconds, _10k_, _half_, _marathon_). These are the most direct answer "
+            "to 'am I on track for my goal' - compare the prediction against a stated target time. "
+            "They are estimates from current fitness, never measured results, and must be described "
+            "as such. Their movement over weeks is a real progress signal: a 10K prediction drifting "
+            "a minute slower means fitness fell, not that one day went badly."
         ),
         "input_schema": {
             "type": "object",
@@ -465,6 +471,12 @@ def _metric_to_dict(metric: DailyMetric) -> dict:
         "readiness_score": metric.training_readiness_score,
         "readiness_level": metric.training_readiness_level,
         "recovery_time_minutes": metric.recovery_time_minutes,
+        # Garmin's predicted finish times in seconds. The most direct answer
+        # to "am I on track for my goal" the data contains.
+        "race_predict_5k_seconds": metric.race_predict_5k_seconds,
+        "race_predict_10k_seconds": metric.race_predict_10k_seconds,
+        "race_predict_half_seconds": metric.race_predict_half_seconds,
+        "race_predict_marathon_seconds": metric.race_predict_marathon_seconds,
     }
     # Dropping nulls keeps tool results small and stops the model from
     # reading "sleep_minutes: null" as "slept 0 hours".

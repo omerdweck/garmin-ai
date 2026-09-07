@@ -442,6 +442,72 @@ def _humanize_duration(minutes: int) -> str:
     return f"{days} ימים"
 
 
+def _format_race_time(seconds: int) -> str:
+    """48:47 for anything under an hour, 1:50:47 above it."""
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+RACE_LABELS = [
+    ("race_predict_5k_seconds", "5 ק\"מ"),
+    ("race_predict_10k_seconds", "10 ק\"מ"),
+    ("race_predict_half_seconds", "חצי מרתון"),
+    ("race_predict_marathon_seconds", "מרתון"),
+]
+
+# How far back to look for a figure to compare today's prediction against.
+# A month is long enough for training to have moved it and short enough that
+# the comparison still describes the current block.
+RACE_TREND_DAYS = 30
+
+
+def format_race_predictions(session: Session, user_id: int) -> str:
+    """
+    Garmin's predicted finish times, with how each has moved.
+
+    The movement is the point. A single predicted time is a number; the same
+    number a minute slower than a month ago is evidence, and it is the only
+    progress measure here that responds to training rather than to a single
+    day's sleep.
+    """
+    metrics = _recent_metrics(session, user_id, days=RACE_TREND_DAYS + 7)
+    if not metrics:
+        return NO_DATA
+
+    lines = [_rtl("🏁 *תחזיות זמנים*"), ""]
+    found = False
+
+    for field, label in RACE_LABELS:
+        current, current_date = _latest_value(metrics, field)
+        if current is None:
+            continue
+        found = True
+
+        # Compared against a reading about a month old, not the immediately
+        # preceding one: these move by seconds a day, so yesterday tells you
+        # nothing.
+        older = [m for m in metrics if m.date <= current_date - timedelta(days=RACE_TREND_DAYS)]
+        past, past_date = _latest_value(older, field)
+
+        note = ""
+        if past is not None and past != current:
+            delta = int(past) - int(current)
+            # Faster is a smaller number, so a positive delta is an improvement.
+            sign = "⬆️ מהר יותר ב" if delta > 0 else "⬇️ איטי יותר ב"
+            note = f"  ·  {sign}-{_format_race_time(abs(delta))} מלפני חודש"
+
+        lines.append(_rtl(f"{label} — *{_format_race_time(current)}*{note}"))
+
+    if not found:
+        return NO_DATA
+
+    lines += ["", _rtl("_הערכה של גרמין לפי הכושר הנוכחי, לא תוצאה שנמדדה._")]
+    return "\n".join(lines)
+
+
 def _training_load_lines(metrics: list[DailyMetric]) -> list[str]:
     """
     Acute against chronic load, with the comparison spelled out.

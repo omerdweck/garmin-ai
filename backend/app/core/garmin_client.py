@@ -39,6 +39,7 @@ __all__ = [
     "get_exercise_sets",
     "get_watch_last_upload",
     "get_training_load",
+    "get_race_predictions",
 ]
 
 
@@ -197,6 +198,42 @@ def get_training_load(session: Garmin, date: str) -> dict:
         return result
     except Exception:
         logger.debug("could not read training load for %s", date, exc_info=True)
+        return {}
+
+
+def get_race_predictions(session: Garmin, start: str, end: str) -> dict:
+    """
+    Garmin's predicted finish times for 5K, 10K, half and full marathon,
+    keyed by calendar date, in seconds.
+
+    Fetched as one ranged call for the whole sync window rather than one per
+    day: the endpoint accepts a range, and turning a 30-day backfill into 30
+    extra requests against an IP-rate-limited API to get data one call
+    already returns would be indefensible.
+
+    Worth storing per day rather than only the latest: the prediction moves
+    as fitness moves, so the history is the progress measure. A prediction
+    that has drifted a minute slower over two months says something no
+    single day's figure can.
+
+    Returns {} on any failure - supplementary context must never fail a sync.
+    """
+    try:
+        rows = session.get_race_predictions(startdate=start, enddate=end, _type="daily")
+        if not isinstance(rows, list):
+            return {}
+        return {
+            row["calendarDate"]: {
+                "5k": row.get("time5K"),
+                "10k": row.get("time10K"),
+                "half": row.get("timeHalfMarathon"),
+                "marathon": row.get("timeMarathon"),
+            }
+            for row in rows
+            if row.get("calendarDate")
+        }
+    except Exception:
+        logger.debug("could not read race predictions", exc_info=True)
         return {}
 
 
