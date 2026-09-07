@@ -78,19 +78,39 @@ def parse_duration(text: str) -> Optional[int]:
 
 def parse_distance(text: str, is_swim: bool) -> Optional[float]:
     """
-    Distance in metres, or None. Swimming is entered in metres and
-    everything else in kilometres, matching how each sport is actually
-    talked about - nobody says "0.8 kilometres" about a swim.
+    Distance in metres, reading the unit the user wrote rather than assuming
+    one from the sport.
+
+    This is the whole point: "800" in a run means 800 km if you assume
+    kilometres, and someone typing "800 מטר" plainly means 800 metres.
+    Getting it wrong stores a workout off by a factor of a thousand, and
+    nothing downstream would question an 800 km run.
+
+    Only when no unit is written does the sport decide - kilometres for
+    running, cycling and walking, metres for swimming, which is how each is
+    actually talked about.
     """
-    text = (text or "").strip().replace(",", ".")
+    text = (text or "").strip().replace(",", ".").replace("״", '"').replace("’", "'")
     numbers = re.findall(r"\d+(?:\.\d+)?", text)
     if not numbers:
         return None
-
     value = float(numbers[0])
-    if is_swim:
-        return value if 0 < value <= MAX_SWIM_DISTANCE_M else None
-    return value * 1000 if 0 < value <= MAX_DISTANCE_KM else None
+
+    lowered = text.lower()
+    # Kilometres checked first: every Hebrew spelling of "ק\"מ" contains the
+    # letter מ, so testing for metres first would match all of them.
+    if re.search(r'ק"?מ|קילומטר|\bkm\b', lowered):
+        unit = "km"
+    elif re.search(r"מטר|מ'|\bm\b|\bmeters?\b", lowered):
+        unit = "m"
+    else:
+        unit = "m" if is_swim else "km"
+
+    meters = value if unit == "m" else value * 1000
+    if meters <= 0:
+        return None
+    limit = MAX_SWIM_DISTANCE_M if is_swim else MAX_DISTANCE_KM * 1000
+    return meters if meters <= limit else None
 
 
 def type_label(type_key: str) -> str:

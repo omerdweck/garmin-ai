@@ -952,25 +952,13 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if step == "typedur":
         draft["awaiting"] = "duration"
-        await query.edit_message_text(
-            "⏱ *כמה זמן נמשך האימון?*\n\n"
-            "כתוב את מספר הדקות. לדוגמה:\n"
-            "`37` · `37 דקות` · `1:15` (שעה ורבע)",
-            parse_mode="Markdown",
-        )
+        await query.edit_message_text(DURATION_PROMPT, parse_mode="Markdown")
         return
 
     if step == "typedist":
         draft["awaiting"] = "distance"
-        swim = draft["type"] == "lap_swimming"
         await query.edit_message_text(
-            # The unit is stated, not implied: "1.5" means very different
-            # things in a swim and a run, and a wrong guess here silently
-            # stores a workout that is off by a factor of a thousand.
-            "📏 *מה המרחק במטרים?*\n\nלדוגמה:\n`750` · `1200 מטר`"
-            if swim
-            else "📏 *מה המרחק בקילומטרים?*\n\nלדוגמה:\n`8` · `8.5` · `12.3`",
-            parse_mode="Markdown",
+            _distance_prompt(draft["type"] == "lap_swimming"), parse_mode="Markdown"
         )
         return
 
@@ -1042,6 +1030,45 @@ def _manual_summary(draft: dict) -> str:
     return " · ".join(parts)
 
 
+# One example per line, lettered. A single line of examples separated by
+# dots read as one run-on string, and the unit - the part that actually
+# matters - got lost in it.
+DURATION_PROMPT = (
+    "⏱ *כמה זמן נמשך האימון?*\n\n"
+    "כתוב את מספר הדקות. לדוגמה:\n"
+    "א. `45` (45 דקות)\n"
+    "ב. `45 דקות`\n"
+    "ג. `1:15` (שעה ורבע)"
+)
+
+
+def _distance_prompt(is_swim: bool) -> str:
+    """
+    Spells out both units and shows how to write a short distance.
+
+    Without the last example someone types "800" meaning metres and stores
+    an 800 km run. The parser reads whichever unit is written, so the fix is
+    to make sure the user knows they can write one.
+    """
+    if is_swim:
+        return (
+            "📏 *מה המרחק?*\n\n"
+            "בשחייה אפשר לכתוב במטרים או בק\"מ. לדוגמה:\n"
+            "א. `750` (750 מטר)\n"
+            "ב. `1200 מטר`\n"
+            "ג. `1.5 ק\"מ` (1500 מטר)\n\n"
+            "_בלי ציון יחידה - נספר כמטרים._"
+        )
+    return (
+        "📏 *מה המרחק?*\n\n"
+        "אפשר לכתוב בק\"מ או במטרים. לדוגמה:\n"
+        "א. `8` (8 ק\"מ)\n"
+        "ב. `8.5 ק\"מ`\n"
+        "ג. `800 מטר` (או `0.8`)\n\n"
+        "_בלי ציון יחידה - נספר כקילומטרים._"
+    )
+
+
 def _manual_confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -1089,10 +1116,7 @@ async def on_manual_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # rejection that does not show what was expected leaves the user
             # guessing at the same wall twice.
             await update.message.reply_text(
-                "לא הצלחתי לקרוא את זה 🤔\n\n"
-                "כתוב את מספר הדקות בלבד:\n"
-                "`37` · `37 דקות` · `1:15`",
-                parse_mode="Markdown",
+                "לא הצלחתי לקרוא את זה 🤔\n\n" + DURATION_PROMPT, parse_mode="Markdown"
             )
             raise ApplicationHandlerStop
         draft["duration"] = minutes
@@ -1125,11 +1149,7 @@ async def on_manual_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if meters is None:
             await update.message.reply_text(
                 "לא הצלחתי לקרוא את זה 🤔\n\n"
-                + (
-                    "כתוב מרחק *במטרים*:\n`750` · `1200 מטר`"
-                    if draft["type"] == "lap_swimming"
-                    else "כתוב מרחק *בקילומטרים*:\n`8` · `8.5` · `12.3`"
-                ),
+                + _distance_prompt(draft["type"] == "lap_swimming"),
                 parse_mode="Markdown",
             )
             raise ApplicationHandlerStop
