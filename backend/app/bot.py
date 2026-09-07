@@ -167,14 +167,10 @@ AWAITING_TERMS, ASK_EMAIL, ASK_PASSWORD = range(3)
 TERMS_ACCEPTED_KEY = "terms_accepted_at"
 
 # Quick lookups - each one is a single DB read, no Claude involved.
-BTN_HEART = "❤️ דופק מנוחה"
-BTN_STEPS = "👟 צעדים היום"
-BTN_SLEEP = "😴 שינה"
 BTN_ACTIVITIES = "🏃 האימונים שלי"
-BTN_RECOVERY = "🔋 התאוששות"
 BTN_WEEK = "📅 השבוע שלי"
 BTN_RACES = "🏁 תחזיות זמנים"
-BTN_METRICS = "📊 סיכום מלא"
+BTN_METRICS = "📊 המדדים שלי"
 BTN_SYNC = "🔄 סנכרון"
 BTN_ADD_ACTIVITY = "➕ הוספת אימון"
 BTN_CALORIES = "🍽 קלוריות"
@@ -185,11 +181,9 @@ BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [BTN_HEART, BTN_STEPS],
-        [BTN_SLEEP, BTN_ACTIVITIES],
-        [BTN_RECOVERY, BTN_WEEK],
-        [BTN_RACES, BTN_PLAN],
-        [BTN_METRICS, BTN_CALORIES],
+        [BTN_METRICS, BTN_ACTIVITIES],
+        [BTN_WEEK, BTN_RACES],
+        [BTN_PLAN, BTN_CALORIES],
         [BTN_ADD_ACTIVITY, BTN_SYNC],
         [BTN_COACH, BTN_SETTINGS],
     ],
@@ -200,9 +194,8 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 # messages, so any handler that consumes plain text has to be able to tell
 # one apart from something the user typed.
 MENU_BUTTONS = {
-    BTN_HEART, BTN_STEPS, BTN_SLEEP, BTN_ACTIVITIES, BTN_RECOVERY, BTN_WEEK,
-    BTN_PLAN, BTN_METRICS, BTN_ADD_ACTIVITY, BTN_CALORIES, BTN_RACES, BTN_SYNC, BTN_COACH,
-    BTN_SETTINGS, BTN_EXIT_CHAT,
+    BTN_METRICS, BTN_ACTIVITIES, BTN_WEEK, BTN_RACES, BTN_PLAN, BTN_CALORIES,
+    BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT,
 }
 
 # Shown only while in chat mode, so the way out is always one visible tap -
@@ -770,6 +763,75 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # --------------------------------------------------------------------------
 # Menu actions
 # --------------------------------------------------------------------------
+
+
+# The four numbers that used to have a keyboard button each. The snapshot
+# already shows all of them, so these are for reading one in detail - a
+# drill-down, not a shortcut.
+METRIC_DRILLDOWNS = [
+    ("heart", "❤️ דופק מנוחה"),
+    ("steps", "👟 צעדים"),
+    ("sleep", "😴 שינה"),
+    ("recovery", "🔋 התאוששות"),
+]
+
+
+def _metrics_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"metric:{key}")
+        for key, label in METRIC_DRILLDOWNS
+    ]
+    return InlineKeyboardMarkup([buttons[i : i + 2] for i in range(0, len(buttons), 2)])
+
+
+async def show_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    The full snapshot, with the individual metrics one tap below it.
+
+    Four separate keyboard buttons became one because the snapshot already
+    contained all four numbers - the buttons were shortcuts to a subset of a
+    screen people were pressing anyway, and each cost a permanent slot on a
+    keyboard that had grown to fourteen.
+    """
+    user_id = await _require_active(update)
+    if user_id is None:
+        return
+    with Session(engine) as session:
+        text = format_metrics_snapshot(session, user_id)
+    await _reply(update, text, reply_markup=MAIN_KEYBOARD)
+    await update.effective_chat.send_message(
+        "לפירוט על מדד מסוים 👇", reply_markup=_metrics_keyboard()
+    )
+
+
+async def on_metric_drilldown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    key = query.data.split(":", 1)[1]
+
+    formatters = {
+        "heart": format_resting_heart_rate,
+        "steps": format_steps_today,
+        "sleep": format_sleep,
+        "recovery": format_recovery,
+    }
+    formatter = formatters.get(key)
+    if formatter is None:
+        return
+
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        if user is None:
+            return
+        text = formatter(session, user.id)
+
+    # A new message rather than editing: the drill-downs are meant to be
+    # tapped one after another, and editing would erase the previous answer
+    # each time.
+    try:
+        await query.message.chat.send_message(text, parse_mode="Markdown")
+    except BadRequest:
+        await query.message.chat.send_message(text)
 
 
 def _quick_lookup(formatter):
@@ -2209,14 +2271,10 @@ def build_application() -> Application:
     # catch-all so a button tap is never mistaken for a typed question -
     # including while in chat mode, so the exit button always works.
     for button_text, handler in (
-        (BTN_HEART, _quick_lookup(format_resting_heart_rate)),
-        (BTN_STEPS, _quick_lookup(format_steps_today)),
-        (BTN_SLEEP, _quick_lookup(format_sleep)),
+        (BTN_METRICS, show_metrics),
         (BTN_ACTIVITIES, show_activity_types),
-        (BTN_RECOVERY, _quick_lookup(format_recovery)),
         (BTN_WEEK, _quick_lookup(format_week)),
         (BTN_RACES, _quick_lookup(format_race_predictions)),
-        (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
         (BTN_PLAN, show_plan),
         (BTN_ADD_ACTIVITY, add_activity_start),
         (BTN_CALORIES, show_calories),
@@ -2232,6 +2290,7 @@ def build_application() -> Application:
     # plancancel: before plan: - the narrower pattern has to win.
     application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
     application.add_handler(CallbackQueryHandler(on_plan_action, pattern=r"^plan:"))
+    application.add_handler(CallbackQueryHandler(on_metric_drilldown, pattern=r"^metric:"))
     application.add_handler(CallbackQueryHandler(on_manual_step, pattern=r"^manual:"))
     # calrem: before cal: - the narrower pattern has to win, same as
     # acttype_menu before acttype below.
