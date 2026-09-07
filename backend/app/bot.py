@@ -34,6 +34,7 @@ from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -86,6 +87,8 @@ from app.services.manual_activity import (
     SWIM_CHOICES_M,
     build_start_time,
     create_manual_activity,
+    parse_distance,
+    parse_duration,
     takes_distance,
 )
 # Aliased: activity_view exports a type_label too, and a bare import of both
@@ -933,8 +936,33 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             for m in DURATION_CHOICES
         ]
         rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+        rows.append([InlineKeyboardButton("✏️ להקליד משך אחר", callback_data="manual:typedur")])
         rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
         await query.edit_message_text("כמה זמן?", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if step == "typedur":
+        draft["awaiting"] = "duration"
+        await query.edit_message_text(
+            "⏱ *כמה זמן נמשך האימון?*\n\n"
+            "כתוב את מספר הדקות. לדוגמה:\n"
+            "`37` · `37 דקות` · `1:15` (שעה ורבע)",
+            parse_mode="Markdown",
+        )
+        return
+
+    if step == "typedist":
+        draft["awaiting"] = "distance"
+        swim = draft["type"] == "lap_swimming"
+        await query.edit_message_text(
+            # The unit is stated, not implied: "1.5" means very different
+            # things in a swim and a run, and a wrong guess here silently
+            # stores a workout that is off by a factor of a thousand.
+            "📏 *מה המרחק במטרים?*\n\nלדוגמה:\n`750` · `1200 מטר`"
+            if swim
+            else "📏 *מה המרחק בקילומטרים?*\n\nלדוגמה:\n`8` · `8.5` · `12.3`",
+            parse_mode="Markdown",
+        )
         return
 
     if step == "dur":
@@ -953,6 +981,7 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             for c in choices
         ]
         rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+        rows.append([InlineKeyboardButton("✏️ להקליד מרחק אחר", callback_data="manual:typedist")])
         rows.append([InlineKeyboardButton("לא יודע / דלג", callback_data="manual:dist:skip")])
         rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
         await query.edit_message_text("מה המרחק?", reply_markup=InlineKeyboardMarkup(rows))
@@ -1004,18 +1033,100 @@ def _manual_summary(draft: dict) -> str:
     return " · ".join(parts)
 
 
+def _manual_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ שמור", callback_data="manual:save"),
+                InlineKeyboardButton("ביטול", callback_data="manual:abort"),
+            ]
+        ]
+    )
+
+
+async def on_manual_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Catches a typed duration or distance during manual entry.
+
+    Registered in an earlier handler group than the coach, because the coach
+    handler matches every plain message - without this ordering, "37" would
+    be sent to Claude as a question. When this is not waiting for input it
+    returns quietly and the coach handles the message as usual; when it is,
+    ApplicationHandlerStop keeps the same text from reaching the coach too.
+    """
+    draft = context.user_data.get(MANUAL_KEY)
+    if not draft or not draft.get("awaiting"):
+        return
+
+    field = draft["awaiting"]
+    text = update.message.text
+
+    if field == "duration":
+        minutes = parse_duration(text)
+        if minutes is None:
+            # The error repeats the format rather than just saying no - a
+            # rejection that does not show what was expected leaves the user
+            # guessing at the same wall twice.
+            await update.message.reply_text(
+                "לא הצלחתי לקרוא את זה 🤔\n\n"
+                "כתוב את מספר הדקות בלבד:\n"
+                "`37` · `37 דקות` · `1:15`",
+                parse_mode="Markdown",
+            )
+            raise ApplicationHandlerStop
+        draft["duration"] = minutes
+        draft.pop("awaiting")
+
+        if not takes_distance(draft["type"]):
+            await update.message.reply_text(
+                f"לשמור את האימון הזה?\n\n*{_manual_summary(draft)}*",
+                parse_mode="Markdown",
+                reply_markup=_manual_confirm_keyboard(),
+            )
+            raise ApplicationHandlerStop
+
+        swim = draft["type"] == "lap_swimming"
+        choices = SWIM_CHOICES_M if swim else DISTANCE_CHOICES_KM
+        unit = "מ'" if swim else 'ק"מ'
+        buttons = [
+            InlineKeyboardButton(f"{c} {unit}", callback_data=f"manual:dist:{c}")
+            for c in choices
+        ]
+        rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+        rows.append([InlineKeyboardButton("✏️ להקליד מרחק אחר", callback_data="manual:typedist")])
+        rows.append([InlineKeyboardButton("לא יודע / דלג", callback_data="manual:dist:skip")])
+        rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
+        await update.message.reply_text("מה המרחק?", reply_markup=InlineKeyboardMarkup(rows))
+        raise ApplicationHandlerStop
+
+    if field == "distance":
+        meters = parse_distance(text, draft["type"] == "lap_swimming")
+        if meters is None:
+            await update.message.reply_text(
+                "לא הצלחתי לקרוא את זה 🤔\n\n"
+                + (
+                    "כתוב מרחק *במטרים*:\n`750` · `1200 מטר`"
+                    if draft["type"] == "lap_swimming"
+                    else "כתוב מרחק *בקילומטרים*:\n`8` · `8.5` · `12.3`"
+                ),
+                parse_mode="Markdown",
+            )
+            raise ApplicationHandlerStop
+        draft["distance_m"] = meters
+        draft.pop("awaiting")
+        await update.message.reply_text(
+            f"לשמור את האימון הזה?\n\n*{_manual_summary(draft)}*",
+            parse_mode="Markdown",
+            reply_markup=_manual_confirm_keyboard(),
+        )
+        raise ApplicationHandlerStop
+
+
 async def _manual_confirm(query, draft: dict) -> None:
     await query.edit_message_text(
         f"לשמור את האימון הזה?\n\n*{_manual_summary(draft)}*",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("✅ שמור", callback_data="manual:save"),
-                    InlineKeyboardButton("ביטול", callback_data="manual:abort"),
-                ]
-            ]
-        ),
+        reply_markup=_manual_confirm_keyboard(),
     )
 
 
@@ -1556,6 +1667,11 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
     application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
     application.add_handler(CallbackQueryHandler(on_manual_step, pattern=r"^manual:"))
+    # Group -1: runs before the coach handler, which matches every plain
+    # message. Without this a typed "37" would go to Claude as a question.
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, on_manual_text), group=-1
+    )
     application.add_handler(CallbackQueryHandler(on_account_action, pattern=r"^account:"))
     # Outside the conversation on purpose: approval arrives out of band,
     # minutes or hours later, so neither side can be held in a state.

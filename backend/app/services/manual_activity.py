@@ -13,6 +13,7 @@ coach's projection already strips nulls, so absence reads as absence.
 """
 
 import logging
+import re
 from datetime import datetime, time, timedelta
 from typing import Optional
 
@@ -40,10 +41,56 @@ MANUAL_TYPES = [
 DISTANCE_TYPES = {"running", "lap_swimming", "cycling", "walking"}
 
 DURATION_CHOICES = [20, 30, 45, 60, 90]
+
+# Bounds for typed input. Generous rather than tight - the point is to catch
+# a typo or a stray word, not to argue with someone who ran an ultra.
+MIN_DURATION_MINUTES = 1
+MAX_DURATION_MINUTES = 24 * 60
+MAX_DISTANCE_KM = 300
+MAX_SWIM_DISTANCE_M = 50_000
 DISTANCE_CHOICES_KM = [3, 5, 7, 10]
 # Swimming is measured in metres and at a completely different scale - 5 km
 # is a serious swim, so offering the running ladder would be useless.
 SWIM_CHOICES_M = [500, 1000, 1500, 2000]
+
+
+def parse_duration(text: str) -> Optional[int]:
+    """
+    Minutes from whatever the user typed, or None if it is not a usable
+    number. Accepts "45", "45 דקות", "1:30" - people write a duration the
+    way they say it, and rejecting "45 דקות" because of the word would be
+    the kind of pedantry that makes a form feel broken.
+    """
+    text = (text or "").strip().replace(",", ".")
+
+    # "1:30" means an hour and a half, not one point three.
+    match = re.match(r"^(\d{1,2}):(\d{2})$", text)
+    if match:
+        minutes = int(match.group(1)) * 60 + int(match.group(2))
+        return minutes if MIN_DURATION_MINUTES <= minutes <= MAX_DURATION_MINUTES else None
+
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+    if not numbers:
+        return None
+    minutes = int(round(float(numbers[0])))
+    return minutes if MIN_DURATION_MINUTES <= minutes <= MAX_DURATION_MINUTES else None
+
+
+def parse_distance(text: str, is_swim: bool) -> Optional[float]:
+    """
+    Distance in metres, or None. Swimming is entered in metres and
+    everything else in kilometres, matching how each sport is actually
+    talked about - nobody says "0.8 kilometres" about a swim.
+    """
+    text = (text or "").strip().replace(",", ".")
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+    if not numbers:
+        return None
+
+    value = float(numbers[0])
+    if is_swim:
+        return value if 0 < value <= MAX_SWIM_DISTANCE_M else None
+    return value * 1000 if 0 < value <= MAX_DISTANCE_KM else None
 
 
 def type_label(type_key: str) -> str:
