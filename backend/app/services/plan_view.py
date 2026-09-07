@@ -218,11 +218,18 @@ def cancel_plan(session: Session, user_id: int, discipline: str) -> bool:
 
     Sessions go first - they hold a foreign key to the plan and there is no
     ON DELETE CASCADE behind them.
+
+    Restricted to the *approved* plan. Since proposals exist, a discipline
+    can have two rows, and a bare .first() would have picked whichever the
+    database happened to return - so "delete my running plan" could have
+    quietly thrown away the draft under review and left the real plan in
+    place. Discarding a proposal is discard_pending, a different action.
     """
     plan = session.exec(
         select(TrainingPlan).where(
             TrainingPlan.user_id == user_id,
             TrainingPlan.discipline == discipline,
+            TrainingPlan.is_active == True,  # noqa: E712
         )
     ).first()
     if plan is None:
