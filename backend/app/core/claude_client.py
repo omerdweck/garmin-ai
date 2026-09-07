@@ -41,9 +41,11 @@ from app.models.activity import SOURCE_MANUAL, Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
+from app.models.personal_record import PersonalRecord
 from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
+from app.services.records import format_value, record_meta
 from app.services.weekly_report import build_weekly_facts, format_weekly_facts
 from app.models.user import User
 
@@ -349,6 +351,26 @@ TOOLS = [
         },
     },
     {
+        "name": "get_personal_records",
+        "description": (
+            "Returns the user's personal records from Garmin, per sport. Call this when they ask "
+            "about their bests, when setting a goal or a plan that involves a target time or "
+            "distance, or when judging whether a result was strong for them - a 24-minute 5 km "
+            "means one thing for someone whose record is 21:50 and another for someone at 30:00.\n\n"
+            "Each record has `value_text` already formatted for display, plus `value` with its "
+            "`unit` ('time' in seconds, 'distance' in metres) and `lower_is_better` so you can "
+            "compare correctly - a faster time is a SMALLER number, a longer distance a BIGGER "
+            "one. `achieved_at` is when it was set; a record from years ago is context worth "
+            "using, not a current fitness level.\n\n"
+            "Two things not to get wrong. These are Garmin's records, which include the best "
+            "segment INSIDE a longer workout - a 5 km record may come from within a 10 km run, so "
+            "never describe it as a race the user ran. And the list covers only the record types "
+            "Garmin labels reliably: a sport or distance missing from it means we have no record "
+            "for it, NOT that the user has never done it. Never invent a record that is not here."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "get_calorie_status",
         "description": (
             "Returns the user's calorie tracking state: whether it is on at all, their daily "
@@ -573,6 +595,40 @@ def fetch_training_plans(session: Session, user_id: int) -> list[dict]:
     return result
 
 
+def fetch_personal_records(session: Session, user_id: int) -> list[dict]:
+    """
+    The stored records, shaped for the model.
+
+    Both the raw value and the formatted string go out. The formatted one is
+    what a reply should quote, so the model never has to turn 1310.3 seconds
+    into 21:50 itself and get it wrong; the raw one with its unit and
+    direction is what makes a comparison possible at all.
+    """
+    rows = session.exec(
+        select(PersonalRecord).where(PersonalRecord.user_id == user_id)
+    ).all()
+
+    result = []
+    for row in rows:
+        meta = record_meta(row.record_type)
+        if meta is None:
+            continue
+        _, sport, label_he, unit, lower_is_better = meta
+        result.append(
+            {
+                "record_type": row.record_type,
+                "sport": sport,
+                "label_he": label_he,
+                "value": row.value,
+                "value_text": format_value(row.record_type, row.value),
+                "unit": unit,
+                "lower_is_better": lower_is_better,
+                "achieved_at": row.achieved_at.isoformat() if row.achieved_at else None,
+            }
+        )
+    return result
+
+
 def fetch_calorie_status(session: Session, user: User, days: int = 7) -> dict:
     """
     Intake against measured burn, shared by the coach tool and the daily
@@ -735,6 +791,11 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
             session.delete(existing)
             session.commit()
         return json.dumps({"deleted": existing is not None}, ensure_ascii=False)
+
+    if name == "get_personal_records":
+        return json.dumps(
+            {"records": fetch_personal_records(session, user.id)}, ensure_ascii=False
+        )
 
     if name == "get_calorie_status":
         return json.dumps(
