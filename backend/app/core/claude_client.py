@@ -26,11 +26,17 @@ import anthropic
 from sqlmodel import Session, col, delete, select
 
 from app.core.claude_pricing import calculate_cost
+from app.services.calorie_tracking import (
+    burned_on,
+    consumed_on,
+    is_burn_provisional,
+)
 from app.core.claude_prompts import COACH_SYSTEM_PROMPT, DAILY_SUMMARY_SYSTEM_PROMPT
 from app.core.config import settings
 from app.models.activity import SOURCE_MANUAL, Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
+from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
 from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
@@ -331,6 +337,98 @@ TOOLS = [
             "required": ["discipline"],
         },
     },
+    {
+        "name": "get_calorie_status",
+        "description": (
+            "Returns the user's calorie tracking state: whether it is on at all, their daily "
+            "target, and the last few days of intake against what Garmin measured they burned. "
+            "`tracking: false` means the user has not opted in - say nothing about calories in "
+            "that case and do not push them to start unless they raise it.\n\n"
+            "For each day: `consumed` is what the user logged by hand, `burned` is Garmin's TOTAL "
+            "daily expenditure (BMR included, not just workouts), and `burn_source` says where it "
+            "came from - 'garmin' measured, 'manual' the user typed it, 'none' means the watch was "
+            "not worn. When burn_source is 'none' there is NO balance for that day; say so instead "
+            "of inventing one. `burn_provisional` on today means the figure is still accumulating."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "How many days back (1-30). Use 1 for today, 7 for a week's trend.",
+                }
+            },
+        },
+    },
+    {
+        "name": "get_meal_plan",
+        "description": (
+            "Returns the user's saved meal plan: the calorie target it was built for, the "
+            "reasoning behind it, and the options for each meal slot. Call this before answering "
+            "anything about what they should eat or how the plan is going - chat history holds "
+            "only the last few turns, so a plan from last week is not in front of you. Never "
+            "describe a plan you cannot see."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_meal_plan",
+        "description": (
+            "Saves or replaces the user's meal plan. Call this whenever you build one. Give "
+            "2-3 options per meal so there is real variety - a single fixed menu is one nobody "
+            "follows past the third day. The options should add up to roughly the target. "
+            "Saving replaces the whole plan, so send every meal every time, not just the changes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_calories": {
+                    "type": "integer",
+                    "description": "The daily intake the options add up to.",
+                },
+                "approach": {
+                    "type": "string",
+                    "description": (
+                        "In Hebrew: what the plan is built around and why - protein split, meal "
+                        "timing around training, anything the user asked for. Self-contained "
+                        "enough to make sense weeks later without this conversation."
+                    ),
+                },
+                "meals": {
+                    "type": "array",
+                    "description": "Every option, across all slots.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "slot": {
+                                "type": "string",
+                                "enum": ["breakfast", "lunch", "dinner", "snack"],
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Short name in Hebrew, e.g. 'חביתה עם אבוקדו'.",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Portions and ingredients, in Hebrew, concrete enough to actually make.",
+                            },
+                            "calories": {"type": "integer"},
+                        },
+                        "required": ["slot", "title"],
+                    },
+                },
+            },
+            "required": ["target_calories", "approach", "meals"],
+        },
+    },
+    {
+        "name": "delete_meal_plan",
+        "description": (
+            "Removes the meal plan entirely. Use only when the user asks to stop - "
+            "set_meal_plan already replaces an existing plan."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -348,6 +446,9 @@ def _metric_to_dict(metric: DailyMetric) -> dict:
         "vo2_max": metric.vo2_max,
         "steps": metric.steps,
         "active_calories": metric.active_calories,
+        # Total daily expenditure, BMR included. Never sent before, and
+        # without it the coach cannot reason about a calorie balance at all.
+        "total_calories": metric.total_calories,
         "distance_meters": metric.distance_meters,
         "avg_stress": metric.avg_stress_level,
         "body_battery_high": metric.body_battery_high,
@@ -451,6 +552,69 @@ def fetch_training_plans(session: Session, user_id: int) -> list[dict]:
     return result
 
 
+def fetch_calorie_status(session: Session, user: User, days: int = 7) -> dict:
+    """
+    Intake against measured burn, shared by the coach tool and the daily
+    summary so the two can never disagree - the same reason
+    fetch_training_plans is shared.
+
+    A day with no burn figure carries burn: null and burn_source: "none"
+    rather than a zero. Zero would read as "burned nothing", which is a
+    claim, where null is the absence of one.
+    """
+    if user.daily_calorie_target is None:
+        return {"tracking": False}
+
+    days = max(1, min(days, 30))
+    today = date_type.today()
+    entries = []
+    for offset in range(days):
+        day = today - timedelta(days=offset)
+        burned, source = burned_on(session, user.id, day)
+        entry = {
+            "date": day.isoformat(),
+            "consumed": consumed_on(session, user.id, day),
+            "burned": burned,
+            "burn_source": source,
+        }
+        if is_burn_provisional(day, source):
+            entry["burn_provisional"] = True
+        entries.append(entry)
+
+    return {
+        "tracking": True,
+        "daily_target": user.daily_calorie_target,
+        "days": entries,
+    }
+
+
+def fetch_meal_plan(session: Session, user_id: int) -> Optional[dict]:
+    plan = session.exec(select(MealPlan).where(MealPlan.user_id == user_id)).first()
+    if plan is None:
+        return None
+
+    options = session.exec(
+        select(MealOption).where(MealOption.plan_id == plan.id)
+    ).all()
+
+    meals: dict[str, list] = {}
+    for option in options:
+        meals.setdefault(option.meal_slot, []).append(
+            {
+                "title": option.title,
+                "description": option.description,
+                "calories": option.calories,
+            }
+        )
+
+    return {
+        "target_calories": plan.target_calories,
+        "approach": plan.approach,
+        "updated_at": plan.updated_at.isoformat(),
+        "meals": meals,
+    }
+
+
 def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> str:
     """Runs one tool and returns its result as a JSON string for the API."""
     if name == "get_recent_daily_metrics":
@@ -538,6 +702,69 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
             # Sessions first: they carry a foreign key to the plan, and there
             # is no ON DELETE CASCADE to fall back on.
             session.exec(delete(PlanSession).where(PlanSession.plan_id == existing.id))
+            session.delete(existing)
+            session.commit()
+        return json.dumps({"deleted": existing is not None}, ensure_ascii=False)
+
+    if name == "get_calorie_status":
+        return json.dumps(
+            fetch_calorie_status(session, user, tool_input.get("days", 7)), ensure_ascii=False
+        )
+
+    if name == "get_meal_plan":
+        plan = fetch_meal_plan(session, user.id)
+        return json.dumps(plan or {"plan": None}, ensure_ascii=False)
+
+    if name == "set_meal_plan":
+        existing = session.exec(select(MealPlan).where(MealPlan.user_id == user.id)).first()
+        if existing is None:
+            existing = MealPlan(
+                user_id=user.id,
+                approach=tool_input.get("approach", ""),
+                target_calories=tool_input.get("target_calories", 0),
+            )
+        else:
+            existing.approach = tool_input.get("approach", existing.approach)
+            existing.target_calories = tool_input.get("target_calories", existing.target_calories)
+            existing.updated_at = datetime.now(timezone.utc)
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+
+        # Replace rather than merge, the same rule set_training_plan follows:
+        # a revised plan is a whole plan, and merging would strand options in
+        # slots the new one deliberately emptied.
+        session.exec(
+            delete(MealOption).where(
+                MealOption.user_id == user.id,
+                MealOption.plan_id == existing.id,
+            )
+        )
+        for item in tool_input.get("meals") or []:
+            slot = item.get("slot")
+            if slot not in MEAL_SLOTS:
+                continue
+            session.add(
+                MealOption(
+                    user_id=user.id,
+                    plan_id=existing.id,
+                    meal_slot=slot,
+                    title=item.get("title") or "",
+                    description=item.get("description"),
+                    calories=item.get("calories"),
+                )
+            )
+        session.commit()
+        return json.dumps(
+            {"saved": True, "meals": len(tool_input.get("meals") or [])}, ensure_ascii=False
+        )
+
+    if name == "delete_meal_plan":
+        existing = session.exec(select(MealPlan).where(MealPlan.user_id == user.id)).first()
+        if existing is not None:
+            # Children first - they hold a foreign key and there is no
+            # ON DELETE CASCADE behind it.
+            session.exec(delete(MealOption).where(MealOption.plan_id == existing.id))
             session.delete(existing)
             session.commit()
         return json.dumps({"deleted": existing is not None}, ensure_ascii=False)
@@ -668,6 +895,11 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
         if DAY_KEYS.index(item["day"]) == tomorrow_index
     ]
 
+    # Only added when the user opted in, so a non-tracking user's payload is
+    # byte-identical to what it was before calories existed.
+    calorie_block = fetch_calorie_status(session, user, days=3)
+    meal_plan = fetch_meal_plan(session, user.id) if calorie_block.get("tracking") else None
+
     payload = {
         "today": today,
         "goal": user.training_goal,
@@ -684,6 +916,11 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
             "sessions": tomorrow_sessions,
         },
     }
+
+    if calorie_block.get("tracking"):
+        payload["calories"] = calorie_block
+        if meal_plan is not None:
+            payload["meal_plan"] = meal_plan
 
     response = _call_claude(
         client,

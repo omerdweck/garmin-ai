@@ -109,6 +109,7 @@ from app.services.calorie_tracking import (
     set_target,
     weekly_average_burn,
 )
+from app.services.meal_plan_view import delete_meal_plan, format_meal_plan
 from app.services.plan_view import (
     active_plans,
     cancel_plan,
@@ -1236,6 +1237,7 @@ def _calorie_menu(tracking: bool, burn_known: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("📊 ממוצע השבוע", callback_data="cal:burnavg"),
             ]
         )
+    rows.append([InlineKeyboardButton("📖 התפריט שלי", callback_data="cal:menu")])
     rows.append([InlineKeyboardButton("⚙️ הגדרות מעקב", callback_data="cal:settings")])
     return InlineKeyboardMarkup(rows)
 
@@ -1353,6 +1355,46 @@ async def on_calorie_step(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             set_burn_override(session, user.id, average)
             text = format_balance(session, user.id)
         await _reply_text(query, "📊 השתמשתי בממוצע השבוע שלך.\n\n" + text)
+        return
+
+    if step == "menu":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            text = format_meal_plan(session, user.id)
+        if not text:
+            await query.edit_message_text(
+                "עוד אין לך תפריט 🍽\n\n"
+                "לחץ 💬 שיחה עם המאמן ובקש שיבנה לך אחד לפי היעד שלך."
+            )
+            return
+        await _reply_text(query, text)
+        await query.message.chat.send_message(
+            "​",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🗑 מחיקת התפריט", callback_data="cal:delmenu")]]
+            ),
+        )
+        return
+
+    if step == "delmenu":
+        await query.edit_message_text(
+            "למחוק את התפריט?\n\nאי אפשר לשחזר.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("🗑 כן, מחק", callback_data="cal:delmenuok"),
+                        InlineKeyboardButton("ביטול", callback_data="cal:abort"),
+                    ]
+                ]
+            ),
+        )
+        return
+
+    if step == "delmenuok":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            removed = delete_meal_plan(session, user.id)
+        await query.edit_message_text("🗑 התפריט נמחק." if removed else "לא נמצא תפריט.")
         return
 
     if step == "settings":
