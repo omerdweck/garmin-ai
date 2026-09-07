@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from sqlmodel import Session, col, select
 
-from app.models.activity import Activity
+from app.models.activity import SOURCE_MANUAL, Activity
 
 RLM = "‏"
 
@@ -414,7 +414,12 @@ def recent_of_type(session: Session, user_id: int, activity_type: str, limit: in
 
 def summary_line(activity: Activity) -> str:
     """One-line label for the picker list - date plus the stat that matters for that type."""
+    # Marked because a manual row genuinely holds less: no heart rate, no
+    # calories. Someone comparing two runs should be able to see why one of
+    # them has half the detail, rather than suspecting the watch failed.
     date = activity.start_time.strftime("%d/%m")
+    if activity.source == SOURCE_MANUAL:
+        date = f"✍️ {date}"
     if activity.activity_type == "strength_training":
         duration = int((activity.duration_seconds or 0) // 60)
         return f"{date} · {duration} דק'"

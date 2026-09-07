@@ -28,7 +28,7 @@ from sqlmodel import Session, col, delete, select
 from app.core.claude_pricing import calculate_cost
 from app.core.claude_prompts import COACH_SYSTEM_PROMPT, DAILY_SUMMARY_SYSTEM_PROMPT
 from app.core.config import settings
-from app.models.activity import Activity
+from app.models.activity import SOURCE_MANUAL, Activity
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession
@@ -374,6 +374,10 @@ def _activity_to_dict(activity: Activity) -> dict:
     result = {
         "type": activity.activity_type,
         "name": activity.activity_name,
+        # Only sent for manual rows - a "source": "garmin" on every activity
+        # would be tokens spent restating the default. Its presence is the
+        # signal that the missing fields below are missing by nature.
+        "manually_entered": True if activity.source == SOURCE_MANUAL else None,
         "start_time": activity.start_time.isoformat(),
         "duration_minutes": round(activity.duration_seconds / 60, 1) if activity.duration_seconds else None,
         "distance_meters": activity.distance_meters,

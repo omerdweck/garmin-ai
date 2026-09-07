@@ -220,6 +220,13 @@ def ensure_exercise_sets(session: Session, activity: Activity) -> Activity:
     if activity.exercise_sets is not None or activity.activity_type != "strength_training":
         return activity
 
+    # A manually entered workout has no Garmin id, so there is nothing to
+    # ask Garmin for - and asking with a NULL id is how this would have
+    # failed. Checked on the id itself rather than on `source`, because the
+    # id is what the request actually needs.
+    if activity.garmin_activity_id is None:
+        return activity
+
     account = session.exec(select(GarminAccount).where(GarminAccount.user_id == activity.user_id)).first()
     if account is None:
         return activity

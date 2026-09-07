@@ -79,6 +79,18 @@ from app.services.signup_control import (
     pending_requests,
     rejection_reason,
 )
+from app.services.manual_activity import (
+    DISTANCE_CHOICES_KM,
+    DURATION_CHOICES,
+    MANUAL_TYPES,
+    SWIM_CHOICES_M,
+    build_start_time,
+    create_manual_activity,
+    takes_distance,
+)
+# Aliased: activity_view exports a type_label too, and a bare import of both
+# silently left whichever came last in force.
+from app.services.manual_activity import type_label as manual_type_label
 from app.services.plan_view import (
     active_plans,
     cancel_plan,
@@ -141,6 +153,7 @@ BTN_RECOVERY = "🔋 התאוששות"
 BTN_WEEK = "📅 השבוע שלי"
 BTN_METRICS = "📊 סיכום מלא"
 BTN_SYNC = "🔄 סנכרון"
+BTN_ADD_ACTIVITY = "➕ הוספת אימון"
 BTN_PLAN = "📋 התוכנית שלי"
 BTN_PLAN_DELETE = "🗑 מחיקת תוכנית"
 BTN_COACH = "💬 שיחה עם המאמן"
@@ -153,12 +166,13 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_SLEEP, BTN_ACTIVITIES],
         [BTN_RECOVERY, BTN_WEEK],
         [BTN_PLAN, BTN_METRICS],
-        [BTN_SYNC, BTN_COACH],
+        [BTN_ADD_ACTIVITY, BTN_SYNC],
+        [BTN_COACH, BTN_SETTINGS],
         # Deliberately not beside 📋 התוכנית שלי: a destructive button
         # adjacent to the one people press constantly is a mis-tap waiting
         # to happen, and the two-tap confirmation should not be the only
         # thing standing between a stray thumb and a deleted plan.
-        [BTN_PLAN_DELETE, BTN_SETTINGS],
+        [BTN_PLAN_DELETE],
     ],
     resize_keyboard=True,
 )
@@ -836,6 +850,175 @@ async def delete_plan_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
+MANUAL_KEY = "manual_activity"
+
+
+async def add_activity_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Opens manual entry, leading with when NOT to use it.
+
+    The warning is the first thing shown rather than a footnote: a workout
+    the watch already recorded will arrive from Garmin on the next sync, and
+    the result is the same session stored twice. Nothing merges them, so the
+    cheapest place to prevent that is before the first tap.
+    """
+    user_id = await _require_active(update)
+    if user_id is None:
+        return
+
+    context.user_data[MANUAL_KEY] = {}
+    await update.message.reply_text(
+        "➕ *הוספת אימון ידנית*\n\n"
+        "⚠️ השתמש בזה *רק לאימון שהשעון לא הקליט* - בלי שעון, או שכחת להתחיל הקלטה.\n\n"
+        "אימון שהשעון כן מדד יגיע אלינו לבד בסנכרון הבא, והוספה ידנית שלו "
+        "תיצור אותו אימון פעמיים.",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await update.effective_chat.send_message(
+        "איזה סוג אימון?",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(label, callback_data=f"manual:type:{key}")]
+                for key, label in MANUAL_TYPES
+            ]
+            + [[InlineKeyboardButton("ביטול", callback_data="manual:abort")]]
+        ),
+    )
+
+
+async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Every step of manual entry. One handler rather than a ConversationHandler
+    because the whole flow is inline buttons - there is no free text to
+    capture, so there is no state a conversation would be tracking that the
+    callback data does not already carry.
+    """
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+    step = parts[1]
+    draft = context.user_data.setdefault(MANUAL_KEY, {})
+
+    if step == "abort":
+        context.user_data.pop(MANUAL_KEY, None)
+        await query.edit_message_text("בוטל 👍")
+        await query.message.chat.send_message("חזרה לתפריט 👇", reply_markup=MAIN_KEYBOARD)
+        return
+
+    if step == "type":
+        draft["type"] = parts[2]
+        await query.edit_message_text(
+            f"{manual_type_label(draft['type'])} - מתי?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("היום", callback_data="manual:day:0"),
+                        InlineKeyboardButton("אתמול", callback_data="manual:day:1"),
+                    ],
+                    [
+                        InlineKeyboardButton("לפני יומיים", callback_data="manual:day:2"),
+                        InlineKeyboardButton("לפני 3 ימים", callback_data="manual:day:3"),
+                    ],
+                    [InlineKeyboardButton("ביטול", callback_data="manual:abort")],
+                ]
+            ),
+        )
+        return
+
+    if step == "day":
+        draft["day_offset"] = int(parts[2])
+        buttons = [
+            InlineKeyboardButton(f"{m} דק'", callback_data=f"manual:dur:{m}")
+            for m in DURATION_CHOICES
+        ]
+        rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+        rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
+        await query.edit_message_text("כמה זמן?", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if step == "dur":
+        draft["duration"] = int(parts[2])
+        if not takes_distance(draft["type"]):
+            # Strength and "other" have no meaningful distance - skipping the
+            # question beats offering one the user has to dismiss every time.
+            await _manual_confirm(query, draft)
+            return
+
+        swim = draft["type"] == "lap_swimming"
+        choices = SWIM_CHOICES_M if swim else DISTANCE_CHOICES_KM
+        unit = "מ'" if swim else "ק\"מ"
+        buttons = [
+            InlineKeyboardButton(f"{c} {unit}", callback_data=f"manual:dist:{c}")
+            for c in choices
+        ]
+        rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+        rows.append([InlineKeyboardButton("לא יודע / דלג", callback_data="manual:dist:skip")])
+        rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
+        await query.edit_message_text("מה המרחק?", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if step == "dist":
+        if parts[2] != "skip":
+            value = float(parts[2])
+            # Swimming is entered in metres, everything else in kilometres.
+            draft["distance_m"] = value if draft["type"] == "lap_swimming" else value * 1000
+        await _manual_confirm(query, draft)
+        return
+
+    if step == "save":
+        with Session(engine) as session:
+            user = _find_user(session, query.message.chat_id)
+            if user is None:
+                await query.edit_message_text("לא נמצא משתמש.")
+                return
+            activity = create_manual_activity(
+                session,
+                user_id=user.id,
+                activity_type=draft["type"],
+                start_time=build_start_time(draft.get("day_offset", 0)),
+                duration_minutes=draft["duration"],
+                distance_meters=draft.get("distance_m"),
+            )
+            summary = _manual_summary(draft)
+
+        context.user_data.pop(MANUAL_KEY, None)
+        await query.edit_message_text(f"✅ *נשמר*\n\n{summary}", parse_mode="Markdown")
+        await query.message.chat.send_message(
+            "האימון נוסף לרשימת האימונים שלך 💪\n\n"
+            "_שים לב: מדדי העומס של גרמין לא כוללים אימונים שהוזנו ידנית._",
+            parse_mode="Markdown",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+
+
+def _manual_summary(draft: dict) -> str:
+    when = {0: "היום", 1: "אתמול", 2: "לפני יומיים"}.get(
+        draft.get("day_offset", 0), f"לפני {draft.get('day_offset')} ימים"
+    )
+    parts = [manual_type_label(draft["type"]), when, f"{draft['duration']} דק'"]
+    dist = draft.get("distance_m")
+    if dist:
+        parts.append(f"{dist:g} מ'" if draft["type"] == "lap_swimming" else f'{dist / 1000:g} ק"מ')
+    return " · ".join(parts)
+
+
+async def _manual_confirm(query, draft: dict) -> None:
+    await query.edit_message_text(
+        f"לשמור את האימון הזה?\n\n*{_manual_summary(draft)}*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("✅ שמור", callback_data="manual:save"),
+                    InlineKeyboardButton("ביטול", callback_data="manual:abort"),
+                ]
+            ]
+        ),
+    )
+
+
 async def show_activity_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     First level of the workouts browser: which kinds of training this user
@@ -1361,6 +1544,7 @@ def build_application() -> Application:
         (BTN_METRICS, _quick_lookup(format_metrics_snapshot)),
         (BTN_PLAN, show_plan),
         (BTN_PLAN_DELETE, delete_plan_menu),
+        (BTN_ADD_ACTIVITY, add_activity_start),
         (BTN_SYNC, sync_now),
         (BTN_COACH, enter_chat_mode),
         (BTN_SETTINGS, show_settings),
@@ -1371,6 +1555,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(on_summary_hour, pattern=r"^summary_hour:"))
     application.add_handler(CallbackQueryHandler(on_settings_action, pattern=r"^settings:"))
     application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
+    application.add_handler(CallbackQueryHandler(on_manual_step, pattern=r"^manual:"))
     application.add_handler(CallbackQueryHandler(on_account_action, pattern=r"^account:"))
     # Outside the conversation on purpose: approval arrives out of band,
     # minutes or hours later, so neither side can be held in a state.
