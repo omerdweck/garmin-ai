@@ -82,6 +82,18 @@ new sport — are pure Python and are judged by the workout that *crossed*
 the line, so a month of imported history never turns into a shower of old
 milestones. Switchable in Settings → 📣.
 
+**Anomaly alerts** — after every sync, six rules compare the last few days
+with the athlete's *own* previous four weeks: HRV falling three days in a
+row to below their usual, resting HR 5+ above their usual on two of three
+days, two poor nights out of three, Body Battery not recharging above 50
+for three days, easy runs needing clearly more heartbeats per metre than
+their usual easy runs, and a jump in training load or weekly volume. An
+episode is announced once however long it lasts, several rules firing
+together are one message, and there is at most one alert a day. The
+message shows the numbers against their normal, a short note from the
+coach about the next planned sessions, and a fixed line that it is not
+medical advice. Switchable in Settings → 📣.
+
 **Owner controls** — signup by owner approval, a user cap, per-user message
 and cost ceilings, and per-call cost accounting.
 
@@ -408,6 +420,17 @@ your responsibility.
   sync, and the migration that added the columns filled them for the whole
   history from `raw_json` with plain SQL — no Garmin requests. A test runs
   both paths on the same response and checks they agree.
+- **Anomaly rules are pure functions.** `services/anomaly_rules.py` takes
+  numbers and returns *firing*, *clear* or *unknown* — no database, no
+  clock — and every threshold is in `config.py`. *Unknown* is not *clear*:
+  a night without the watch must not end an episode and let it be announced
+  again. The baseline is the 28 days *before* the days being judged, stored
+  in `metric_baseline`; episodes live in `metric_alert`, where a partial
+  unique index allows only one open episode per rule. A rule that returns
+  within three days continues its old episode, so a metric hovering at the
+  line is announced once. "Easy" runs are the athlete's slower-than-median
+  ones, and drift is measured in metres per heartbeat — we store no HR
+  zones, and a ratio against their own runs needs none.
 - **Garmin throttling pauses everyone.** All requests leave from one IP, so
   when Garmin rate-limits one user's check a Redis switch
   (`garmin-throttled`, 30 min) stops every user's upload check until it

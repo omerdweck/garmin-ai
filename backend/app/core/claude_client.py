@@ -33,6 +33,7 @@ from app.services.calorie_tracking import (
     is_burn_provisional,
 )
 from app.core.claude_prompts import (
+    ANOMALY_SYSTEM_PROMPT,
     COACH_SYSTEM_PROMPT,
     POST_WORKOUT_SYSTEM_PROMPT,
     DAILY_SUMMARY_SYSTEM_PROMPT,
@@ -47,6 +48,7 @@ from app.models.personal_record import PersonalRecord
 from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession, week_index
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
+from app.services.anomalies import health_overview
 from app.services.athlete_profile import add_note, profile_as_dict, profile_prompt_block, update_profile
 from app.services.records import format_value, record_meta
 from app.services.weekly_report import build_weekly_facts, format_weekly_facts
@@ -498,6 +500,17 @@ TOOLS = [
             "train, session length, equipment, pool length, FTP, limitations) and the notes you "
             "saved earlier with `remember`. A compact copy is already in your instructions; call "
             "this when you need the note ids or want to be sure you have the latest."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_health_alerts",
+        "description": (
+            "Returns what is normal for this athlete (28-day mean and spread of resting HR, HRV, "
+            "sleep, Body Battery and easy-run efficiency in metres per heartbeat) and any recent "
+            "anomaly alerts measured against that normal - open ones and ones that ended in the "
+            "last 14 days. Use it when the athlete asks about an alert, about fatigue or "
+            "recovery, or before suggesting harder training. Never present an alert as a diagnosis."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -968,6 +981,9 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
     if name == "get_athlete_profile":
         return json.dumps(profile_as_dict(session, user.id), ensure_ascii=False)
 
+    if name == "get_health_alerts":
+        return json.dumps(health_overview(session, user.id), ensure_ascii=False)
+
     if name == "update_athlete_profile":
         saved, rejected = update_profile(session, user.id, tool_input or {})
         return json.dumps({"saved": saved, "rejected": rejected}, ensure_ascii=False)
@@ -1140,6 +1156,9 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
         "goal": user.training_goal,
         "athlete": profile_as_dict(session, user.id),
         "daily_metrics_last_7_days": metrics,
+        # The athlete's own normal and anything outside it, so the summary
+        # can say "still recovering" with the same numbers the alert used.
+        "health": health_overview(session, user.id),
         "recent_activities": activities,
         # The whole plan, so adherence can be judged against what was
         # actually prescribed rather than a general sense of "enough".
@@ -1275,6 +1294,39 @@ def generate_post_workout_note(session: Session, user: User, facts: dict) -> Opt
             {
                 "role": "user",
                 "content": "הנה נתוני האימון. כתוב את ההודעה.\n\n" + json.dumps(facts, ensure_ascii=False),
+            }
+        ],
+        output_config={"effort": "low"},
+    )
+    return "".join(b.text for b in response.content if b.type == "text").strip() or None
+
+
+def generate_anomaly_note(session: Session, user: User, facts: dict) -> Optional[str]:
+    """
+    The personal paragraph in an anomaly alert: what it might mean, and what
+    to do with the next few planned sessions. The numbers are shown above it
+    by Python, and the "not medical advice" line below it - the model writes
+    neither.
+    """
+    client = _client()
+    response = _call_claude(
+        client,
+        session=session,
+        user_id=user.id,
+        kind="anomaly",
+        model=settings.claude_model,
+        max_tokens=500,
+        system=[
+            {
+                "type": "text",
+                "text": ANOMALY_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": "הנה מה שחרג. כתוב את ההודעה.\n\n" + json.dumps(facts, ensure_ascii=False, default=str),
             }
         ],
         output_config={"effort": "low"},

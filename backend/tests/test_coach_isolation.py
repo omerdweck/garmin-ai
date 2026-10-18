@@ -17,6 +17,7 @@ from app.core.claude_client import TOOLS, _execute_tool
 from app.models.athlete_profile import AthleteProfile, CoachNote
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MealPlan
+from app.models.metric_alert import MetricAlert, MetricBaseline
 from app.models.personal_record import PersonalRecord
 from app.models.training_plan import TrainingPlan
 
@@ -31,6 +32,7 @@ READ_TOOLS = {
     "get_calorie_status": {"days": 30},
     "get_meal_plan": {},
     "get_athlete_profile": {},
+    "get_health_alerts": {},
 }
 
 
@@ -46,6 +48,11 @@ def two_users(session, make_user, make_activity):
     session.add(MealPlan(user_id=other.id, approach=SECRET, target_calories=2000))
     session.add(CoachNote(user_id=other.id, text=SECRET))
     session.add(AthleteProfile(user_id=other.id, limitations=SECRET))
+    session.add(MetricAlert(user_id=other.id, rule=SECRET, started_on=date.today(), last_seen_on=date.today()))
+    session.add(MetricBaseline(
+        user_id=other.id, metric=SECRET, mean=1234.5, std=1, samples=28,
+        window_start=date.today(), window_end=date.today(),
+    ))
     session.commit()
     return me, other
 
