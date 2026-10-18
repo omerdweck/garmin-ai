@@ -1,7 +1,7 @@
 """
 Long user-facing bot copy - the welcome and terms-of-use screens.
 
-Kept out of bot.py because these are content, not logic: they're the
+Kept out of the bot handlers because these are content, not logic: they're the
 longest strings in the project, they get reworded far more often than the
 handlers around them, and a diff that touches only wording shouldn't
 force a reader through the conversation code.

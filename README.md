@@ -106,7 +106,19 @@ auth mechanism would buy nothing.
 
 ```
 backend/app/
-  bot.py              Telegram handlers, menus, onboarding conversation
+  bot/                Telegram bot, one module per area:
+    common.py         menu buttons, keyboards, the account gate
+    onboarding.py     /start, terms, join requests, linking Garmin
+    admin.py          owner-only /admin
+    metrics.py        metrics buttons and quick lookups (no AI)
+    activities.py     workouts by type, details, records
+    manual_activity.py    adding a workout by hand
+    calories.py       calorie tracking and reminders
+    plans.py          training plans
+    preferences.py    settings and account actions
+    coach.py          chat with the AI coach
+    application.py    registers every handler (order matters)
+  bot_concurrency.py  Users in parallel, each user in order
   bot_texts.py        Long user-facing copy (welcome, terms) — Hebrew
   tasks.py            Celery tasks: sync, backfill, daily summary
   celery_app.py       Celery config and the beat schedule
