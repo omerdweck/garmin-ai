@@ -42,7 +42,7 @@ from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
 from app.models.personal_record import PersonalRecord
-from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession
+from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession, week_index
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
 from app.services.records import format_value, record_meta
@@ -983,10 +983,7 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     today_date = date_type.today()
     today = today_date.isoformat()
 
-    # Python's weekday() is Monday=0; the plan's week is Sunday=0, which is
-    # the week these users actually train on. isoweekday() % 7 converts
-    # directly: Sunday 7 -> 0, Monday 1 -> 1, and so on.
-    tomorrow_index = (today_date + timedelta(days=1)).isoweekday() % 7
+    tomorrow_index = week_index(today_date + timedelta(days=1))
 
     # Approved plans only: telling someone what they have tomorrow according
     # to a plan they never accepted would be inventing a commitment.

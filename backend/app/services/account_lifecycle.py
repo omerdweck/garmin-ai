@@ -32,11 +32,7 @@ from sqlmodel import Session, SQLModel, delete, select
 # in it - which would silently skip that table on account deletion.
 import app.models  # noqa: F401
 
-from app.models.activity import Activity
-from app.models.chat_message import ChatMessage
-from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
-from app.models.training_plan import TrainingPlan
 from app.models.user import User
 
 

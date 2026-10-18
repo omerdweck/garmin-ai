@@ -31,6 +31,21 @@ DAY_NAMES_HE = ["ראשון", "שני", "שלישי", "רביעי", "חמישי"
 DAY_KEYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
 
 
+def week_index(day) -> int:
+    """
+    A date's position in the stored week: Sunday=0 .. Saturday=6.
+
+    One function rather than the same expression in three places: Python's
+    own weekday() is Monday=0, so this is exactly the line that goes off by
+    one when retyped from memory - and a wrong day here makes the daily
+    summary announce the wrong workout for tomorrow.
+
+    isoweekday() is Monday=1..Sunday=7, so % 7 maps Sunday to 0 and leaves
+    every other day where it is.
+    """
+    return day.isoweekday() % 7
+
+
 class PlanSession(SQLModel, table=True):
     __tablename__ = "plan_session"
 
