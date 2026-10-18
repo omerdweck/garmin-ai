@@ -236,6 +236,10 @@ What is covered, chosen by what would hurt most if it broke silently:
 - **Account deletion leaves no row behind** in any user-owned table, and a
   new table that the test does not fill fails it. The join request goes
   too, so a returning person needs the owner's approval again.
+- **Users run in parallel, each user in order** — one person's slow coach
+  answer does not hold up anyone else, and two messages from the same
+  person are never handled at once. Background syncs take a per-user lock,
+  and every task has a time limit.
 - **"Today" is the Israeli date**, including just after midnight, and no
   module reads the server clock directly.
 - **Migrations build exactly the schema the models describe** — a model
@@ -353,6 +357,14 @@ your responsibility.
 - **Every environment variable flows through `app/core/config.py`.** Nothing
   reads `os.environ` directly, so "where does configuration come from" has
   one answer.
+- **Concurrency: across users, never within one.** The bot handles updates
+  from different people in parallel but each person's own updates strictly
+  in order (`app/bot_concurrency.py`) — plain concurrency would let two quick
+  messages both pass the quota check and race through a form. A user who
+  writes again while the coach is still answering is told it was received.
+  Coach calls run on their own thread pool (`COACH_MAX_CONCURRENT`, default
+  8) with one shared Anthropic client. In the worker, a Redis lock allows
+  one Garmin sync per user at a time, and every task has a hard time limit.
 - **Time: Israel for the calendar, UTC for bookkeeping.** "Today", reminder
   and summary hours, and a workout's `start_time` (Garmin's local wall
   clock) are Israel time. `created_at`, `last_sync_at` and every other

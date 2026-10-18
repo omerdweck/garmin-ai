@@ -35,6 +35,8 @@ from app.services.calorie_tracking import (
 )
 from app.services.garmin_sync import sync_user_garmin_data
 from app.services.records import format_broken_records
+from app.services.sync_lock import release as release_sync_lock
+from app.services.sync_lock import user_sync_lock
 from app.services.metrics_view import (
     WATCH_STALE_HOURS,
     format_metrics_snapshot,
@@ -76,8 +78,47 @@ def _warn_if_watch_stale(session: Session, user: User) -> None:
     session.commit()
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
+# Hard ceilings per task. A Garmin call that never returns used to hold a
+# worker process forever; now the soft limit raises inside the task (so it
+# can clean up) and the hard limit kills it outright shortly after.
+SYNC_SOFT_LIMIT, SYNC_HARD_LIMIT = 240, 300
+BACKFILL_SOFT_LIMIT, BACKFILL_HARD_LIMIT = 900, 960
+SUMMARY_SOFT_LIMIT, SUMMARY_HARD_LIMIT = 150, 180
+SMALL_SOFT_LIMIT, SMALL_HARD_LIMIT = 60, 90
+
+# The sync lock outlives the hard limit, so it can never expire while the
+# sync holding it is still running.
+SYNC_LOCK_SECONDS = BACKFILL_HARD_LIMIT + 60
+
+
+# acks_late: the message is acknowledged after the task finishes rather than
+# when it starts, so a sync whose worker dies mid-way is delivered again.
+# Safe only because a sync is an upsert - running it twice changes nothing.
+# Never set on tasks that send messages: there a redelivery is a duplicate.
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=300,
+    acks_late=True,
+    soft_time_limit=SYNC_SOFT_LIMIT,
+    time_limit=SYNC_HARD_LIMIT,
+)
 def sync_one_user_task(self, user_id: int, notify_on_success: bool = False) -> None:
+    lock = user_sync_lock(user_id, SYNC_LOCK_SECONDS)
+    if not lock.acquire(blocking=False):
+        if notify_on_success:
+            # The user pressed 🔄 while another sync of theirs is running.
+            # Waiting for it, then reporting, beats both a second parallel
+            # sync and a "try again later" they would have to act on.
+            raise self.retry(countdown=20, max_retries=6)
+        return  # scheduled run: the sync already in progress covers it
+    try:
+        _sync_one_user(self, user_id, notify_on_success)
+    finally:
+        release_sync_lock(lock)
+
+
+def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
     """
     One task per user - if one person's sync fails (expired token,
     Garmin temporarily down), it doesn't block or fail anyone else's,
@@ -177,8 +218,28 @@ SYNC_STAGGER_SECONDS = 8
 BACKFILL_DAYS = 30
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=600)
+@celery_app.task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=600,
+    acks_late=True,
+    soft_time_limit=BACKFILL_SOFT_LIMIT,
+    time_limit=BACKFILL_HARD_LIMIT,
+)
 def backfill_user_history_task(self, user_id: int, days: int = BACKFILL_DAYS) -> None:
+    lock = user_sync_lock(user_id, SYNC_LOCK_SECONDS)
+    if not lock.acquire(blocking=False):
+        # Linking starts the quick sync and the backfill together, so this is
+        # the normal case, not an edge one: wait for the quick sync to finish.
+        # Skipping would silently lose the month of history.
+        raise self.retry(countdown=45, max_retries=8)
+    try:
+        _backfill_user_history(self, user_id, days)
+    finally:
+        release_sync_lock(lock)
+
+
+def _backfill_user_history(self, user_id: int, days: int = BACKFILL_DAYS) -> None:
     """
     One-time deeper sync, run right after a user links their account.
     Paced at one request-group per second: 30 days is ~120 Garmin calls,
@@ -204,7 +265,7 @@ def backfill_user_history_task(self, user_id: int, days: int = BACKFILL_DAYS) ->
             return
 
 
-@celery_app.task
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
 def sync_all_linked_accounts() -> None:
     """
     Runs on Beat's daily schedule. Fans out: for every linked Garmin
@@ -231,7 +292,7 @@ def sync_all_linked_accounts() -> None:
         sync_one_user_task.apply_async(args=[user_id], countdown=index * SYNC_STAGGER_SECONDS)
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120, soft_time_limit=SUMMARY_SOFT_LIMIT, time_limit=SUMMARY_HARD_LIMIT)
 def send_daily_summary_task(self, user_id: int) -> None:
     """One user's end-of-day summary. Separate task per user for the same
     isolation reason as the sync fan-out: one failed Claude call or blocked
@@ -259,7 +320,7 @@ def send_daily_summary_task(self, user_id: int) -> None:
             send_telegram_message(user.telegram_chat_id, summary)
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120, soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
 def send_calorie_reminder_task(self, user_id: int) -> None:
     """
     One user's nudge to log what they ate - or, after a long enough silence,
@@ -315,7 +376,7 @@ def send_calorie_reminder_task(self, user_id: int) -> None:
         send_telegram_message(user.telegram_chat_id, body)
 
 
-@celery_app.task
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
 def dispatch_calorie_reminders() -> None:
     """
     Hourly fan-out, same shape as dispatch_daily_summaries.
@@ -343,7 +404,7 @@ def dispatch_calorie_reminders() -> None:
         send_calorie_reminder_task.apply_async(args=[user_id], countdown=index * 5)
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=300)
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=300, soft_time_limit=SUMMARY_SOFT_LIMIT, time_limit=SUMMARY_HARD_LIMIT)
 def send_weekly_summary_task(self, user_id: int) -> None:
     with Session(engine) as session:
         user = session.get(User, user_id)
@@ -366,7 +427,7 @@ def send_weekly_summary_task(self, user_id: int) -> None:
             send_telegram_message(user.telegram_chat_id, summary)
 
 
-@celery_app.task
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
 def dispatch_weekly_summaries() -> None:
     """
     Hourly, matching both the weekday and the hour.
@@ -398,7 +459,7 @@ def dispatch_weekly_summaries() -> None:
         send_weekly_summary_task.apply_async(args=[user_id], countdown=index * 5)
 
 
-@celery_app.task
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
 def dispatch_daily_summaries() -> None:
     """
     Runs hourly from Beat and fans out to whoever asked for a summary at

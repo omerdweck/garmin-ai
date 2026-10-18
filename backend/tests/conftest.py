@@ -20,6 +20,8 @@ os.environ.setdefault("POSTGRES_PORT", "5432")
 os.environ.setdefault("POSTGRES_USER", "postgres")
 os.environ.setdefault("POSTGRES_PASSWORD", "test")
 os.environ.setdefault("POSTGRES_DB", "garmin_test")
+os.environ.setdefault("REDIS_HOST", "localhost")
+os.environ.setdefault("REDIS_PORT", "6379")
 
 # Dummy secrets. Real ones must never be needed to run the tests - a test
 # that only passes with the production key is a test nobody else can run.

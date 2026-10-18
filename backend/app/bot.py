@@ -43,6 +43,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.bot_concurrency import build_update_processor, coach_executor
 from app.bot_texts import (
     ASK_EMAIL_TEXT,
     ASK_PASSWORD_TEXT,
@@ -2285,7 +2286,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # feels like.
     typing = asyncio.create_task(_keep_typing(update.effective_chat))
     try:
-        reply, tools_used = await asyncio.to_thread(_run)
+        reply, tools_used = await asyncio.get_running_loop().run_in_executor(coach_executor, _run)
     except QuotaExceeded as exc:
         # Not an error: the ceiling did its job. Leave chat mode on so the
         # user can keep the thread when the window resets, and keep the menu
@@ -2366,7 +2367,14 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def build_application() -> Application:
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    application = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        # Different users in parallel, each user's own updates in order -
+        # see app/bot_concurrency.py for why plain concurrency is not enough.
+        .concurrent_updates(build_update_processor())
+        .build()
+    )
 
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("start", start)],

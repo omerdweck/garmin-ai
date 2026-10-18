@@ -32,6 +32,12 @@ celery_app = Celery(
 
 # Beat schedule times are in UTC by default - set explicitly so "06:00"
 # means 06:00 Israel time, not UTC.
+# One task at a time per worker process, taken only when it is free. The
+# default (4) lets a process reserve tasks while busy with a slow one, so a
+# user's sync waits behind someone else's backfill while another process
+# sits idle.
+celery_app.conf.worker_prefetch_multiplier = 1
+
 celery_app.conf.timezone = clock.LOCAL_TZ.key  # "Asia/Jerusalem" - one definition, in clock.py
 
 celery_app.conf.beat_schedule = {
