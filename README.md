@@ -71,6 +71,17 @@ ago to be the real reason data looks stale.
 
 **A daily summary** — a short end-of-day message at an hour each user picks.
 
+**A message after every workout** — the workout's numbers, two to four
+sentences from the coach (compared with recent similar workouts and with what
+the plan said for that day), and any rewards or personal records it earned,
+all in one message. A light check every 30 minutes (06:10-21:40) asks Garmin
+only "when did the watch last upload?" and syncs only when the answer is
+new, so the message arrives within half an hour of the upload. Rewards —
+distance milestones, workout counts, weekly streaks, a first workout in a
+new sport — are pure Python and are judged by the workout that *crossed*
+the line, so a month of imported history never turns into a shower of old
+milestones. Switchable in Settings → 📣.
+
 **Owner controls** — signup by owner approval, a user cap, per-user message
 and cost ceilings, and per-call cost accounting.
 
@@ -397,6 +408,11 @@ your responsibility.
   sync, and the migration that added the columns filled them for the whole
   history from `raw_json` with plain SQL — no Garmin requests. A test runs
   both paths on the same response and checks they agree.
+- **Garmin throttling pauses everyone.** All requests leave from one IP, so
+  when Garmin rate-limits one user's check a Redis switch
+  (`garmin-throttled`, 30 min) stops every user's upload check until it
+  expires. `WATCH_POLL_ENABLED=false` turns the 30-minute check off; the
+  post-workout message then waits for the next scheduled sync.
 - **AI work has its own queue.** Summaries and coach messages run on the
   `coach` queue in a separate `worker_coach` container; syncs never wait
   behind them. `AI_MONTHLY_BUDGET_USD` caps that work for the whole system.

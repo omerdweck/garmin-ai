@@ -79,6 +79,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.dispatch_weekly_summaries",
         "schedule": crontab(minute=25),
     },
+    # Every 30 minutes from 06:10 to 21:40: a cheap "has the watch uploaded?"
+    # per opted-in user, so the post-workout message follows the workout
+    # rather than the next twice-daily sync. Minutes 10/40 stay clear of the
+    # :00 syncs and the :05/:15/:25 dispatchers.
+    "poll-watch-uploads": {
+        "task": "app.tasks.poll_watch_uploads",
+        "schedule": crontab(minute="10,40", hour="6-21"),
+    },
     "dispatch-daily-summaries": {
         "task": "app.tasks.dispatch_daily_summaries",
         "schedule": crontab(minute=5),

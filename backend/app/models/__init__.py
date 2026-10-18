@@ -6,6 +6,7 @@ backend/alembic/env.py) relies on this to diff the real DB against the
 full set of models, not just whichever one happens to get imported first.
 """
 
+from app.models.achievement import Achievement  # noqa: F401
 from app.models.activity import Activity  # noqa: F401
 from app.models.athlete_profile import AthleteProfile, CoachNote  # noqa: F401
 from app.models.calorie_entry import CalorieBurnOverride, CalorieEntry  # noqa: F401
