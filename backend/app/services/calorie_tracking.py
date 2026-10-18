@@ -34,11 +34,12 @@ expenditure far better than a person estimates it.
 import logging
 import re
 from datetime import date as date_type
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from sqlmodel import Session, col, func, select
 
+from app.core import clock
 from app.models.calorie_entry import CalorieBurnOverride, CalorieEntry
 from app.models.daily_metric import DailyMetric
 from app.models.user import User
@@ -158,7 +159,7 @@ def add_entry(
 ) -> CalorieEntry:
     entry = CalorieEntry(
         user_id=user_id,
-        entry_date=on_date or date_type.today(),
+        entry_date=on_date or clock.today(),
         calories=calories,
     )
     session.add(entry)
@@ -178,7 +179,7 @@ def add_entry(
 
 def consumed_on(session: Session, user_id: int, day: Optional[date_type] = None) -> int:
     """Every entry for that day, added up. Zero when nothing was logged."""
-    day = day or date_type.today()
+    day = day or clock.today()
     total = session.exec(
         select(func.coalesce(func.sum(CalorieEntry.calories), 0)).where(
             CalorieEntry.user_id == user_id,
@@ -189,7 +190,7 @@ def consumed_on(session: Session, user_id: int, day: Optional[date_type] = None)
 
 
 def entries_on(session: Session, user_id: int, day: Optional[date_type] = None) -> list[CalorieEntry]:
-    day = day or date_type.today()
+    day = day or clock.today()
     return list(
         session.exec(
             select(CalorieEntry)
@@ -216,7 +217,7 @@ def delete_entry(session: Session, user_id: int, entry_id: int) -> bool:
 
 def set_burn_override(session: Session, user_id: int, calories: int, day: Optional[date_type] = None) -> None:
     """One figure per day, replacing rather than adding."""
-    day = day or date_type.today()
+    day = day or clock.today()
     existing = session.exec(
         select(CalorieBurnOverride).where(
             CalorieBurnOverride.user_id == user_id,
@@ -238,7 +239,7 @@ def weekly_average_burn(session: Session, user_id: int) -> Optional[int]:
     already calibrated to this person, and it needs no body measurements we
     might have wrong.
     """
-    cutoff = date_type.today() - timedelta(days=AVERAGE_WINDOW_DAYS)
+    cutoff = clock.today() - timedelta(days=AVERAGE_WINDOW_DAYS)
     average = session.exec(
         select(func.avg(DailyMetric.total_calories)).where(
             DailyMetric.user_id == user_id,
@@ -260,7 +261,7 @@ def burned_on(session: Session, user_id: int, day: Optional[date_type] = None) -
     and the caller offers the user the choice. Quietly substituting an average
     would put a number nobody measured into a balance the user acts on.
     """
-    day = day or date_type.today()
+    day = day or clock.today()
 
     override = session.exec(
         select(CalorieBurnOverride).where(
@@ -287,7 +288,7 @@ def days_since_last_entry(session: Session, user_id: int) -> Optional[int]:
     ).one()
     if latest is None:
         return None
-    return (date_type.today() - latest).days
+    return (clock.today() - latest).days
 
 
 SOURCE_LABELS = {
@@ -300,9 +301,9 @@ SOURCE_LABELS = {
 def is_burn_provisional(day: date_type, source: str) -> bool:
     """True while today's Garmin figure is still accumulating."""
     return (
-        day == date_type.today()
+        day == clock.today()
         and source == SOURCE_GARMIN
-        and datetime.now().hour < BURN_SETTLED_HOUR
+        and clock.now_local().hour < BURN_SETTLED_HOUR
     )
 
 
@@ -314,7 +315,7 @@ def format_balance(session: Session, user_id: int, day: Optional[date_type] = No
     subtraction, and half a subtraction presented as a balance is a number the
     user would act on that means nothing.
     """
-    day = day or date_type.today()
+    day = day or clock.today()
     user = session.get(User, user_id)
     if user is None or not is_tracking(user):
         return ""

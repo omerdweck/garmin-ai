@@ -6,7 +6,6 @@ forgets either keeps the user's data or makes Postgres refuse the delete.
 
 from datetime import date
 
-import pytest
 from sqlalchemy import func, select
 
 from app.models.calorie_entry import CalorieBurnOverride, CalorieEntry
@@ -20,6 +19,7 @@ from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
 from app.models.user import User
 from app.services.account_lifecycle import _user_owned_tables, delete_user_completely
+from app.services.signup_control import is_approved
 
 
 def _fill_every_table(session, make_activity, user):
@@ -83,27 +83,54 @@ def test_deletion_does_not_touch_other_users(session, make_user, make_activity):
     assert _rows_for(session, other.id) == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap found while writing this test: join_request is keyed by "
-        "telegram_chat_id, not user_id, so deletion leaves the person's name, "
-        "username and approved status behind - and a re-signup is approved "
-        "without asking the owner. Decide the intended behaviour, fix, then "
-        "remove this marker (strict=True makes the suite fail once it passes)."
-    ),
-)
-def test_deletion_also_removes_the_join_request(session, make_user):
-    me = make_user()
+def _approved_request(session, chat_id):
     session.add(JoinRequest(
-        telegram_chat_id=me.telegram_chat_id,
+        telegram_chat_id=chat_id,
         display_name="Omer",
         telegram_username="omer",
         status=STATUS_APPROVED,
     ))
     session.commit()
 
+
+def test_deletion_also_removes_the_join_request(session, make_user):
+    # The join request is keyed by chat id, not user id, so the generic
+    # user_id sweep cannot see it - it has to be deleted by name.
+    me = make_user()
+    chat_id = me.telegram_chat_id
+    _approved_request(session, chat_id)
+
     delete_user_completely(session, me.id)
 
-    remaining = len(session.exec(select(JoinRequest).where(JoinRequest.telegram_chat_id == me.telegram_chat_id)).all())
-    assert remaining == 0
+    remaining = session.exec(select(JoinRequest).where(JoinRequest.telegram_chat_id == chat_id)).all()
+    assert remaining == []
+
+
+def test_returning_after_deletion_needs_approval_again(session, make_user):
+    # The behaviour that matters, not the row: a person who deleted their
+    # account is a stranger again and must be let in by the owner.
+    me = make_user()
+    chat_id = me.telegram_chat_id
+    _approved_request(session, chat_id)
+    assert is_approved(session, chat_id)
+
+    delete_user_completely(session, me.id)
+
+    assert not is_approved(session, chat_id)
+
+
+def test_deletion_keeps_other_peoples_join_requests(session, make_user):
+    me, other = make_user(), make_user()
+    _approved_request(session, me.telegram_chat_id)
+    _approved_request(session, other.telegram_chat_id)
+
+    delete_user_completely(session, me.id)
+
+    assert is_approved(session, other.telegram_chat_id)
+
+
+def test_deletion_returns_the_chat_id_for_clearing_memory(session, make_user):
+    me = make_user()
+    chat_id = me.telegram_chat_id
+
+    assert delete_user_completely(session, me.id) == chat_id

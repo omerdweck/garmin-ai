@@ -725,13 +725,20 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             except ValueError:
                 text = "❌ שימוש: `/admin delete <user_id>`"
             else:
-                if target == update.effective_user.id:
-                    text = "❌ לא ניתן למחוק את חשבון המנהל דרך הפקודה הזו."
-                elif session.get(User, target) is None:
+                target_user = session.get(User, target)
+                if target_user is None:
                     text = f"❌ אין משתמש {target}"
+                # Compared by chat id, not user id: `target` is our database
+                # id and effective_user.id is Telegram's, so comparing those
+                # two never matched and the guard protected nothing.
+                elif target_user.telegram_chat_id == update.effective_chat.id:
+                    text = "❌ לא ניתן למחוק את חשבון המנהל דרך הפקודה הזו."
                 else:
-                    delete_user_completely(session, target)
-                    text = f"🗑 משתמש {target} נמחק על כל נתוניו."
+                    deleted_chat = delete_user_completely(session, target)
+                    if deleted_chat is not None:
+                        # Half-filled forms and chat mode, held in memory.
+                        context.application.drop_user_data(deleted_chat)
+                    text = f"🗑 משתמש {target} נמחק על כל נתוניו, כולל אישור ההצטרפות."
         else:
             text = (
                 "*פקודות ניהול*\n"
@@ -2097,7 +2104,7 @@ async def on_settings_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "• כל נתוני הבריאות והאימונים שנאספו\n"
             "• היסטוריית השיחות עם המאמן\n"
             "• החיבור לחשבון הגרמין וההגדרות שלך\n\n"
-            "*לא ניתן לשחזר.* אם תתחבר שוב בעתיד, תיקלט כמשתמש חדש לגמרי.\n\n"
+            "*לא ניתן לשחזר.* אם תרצה לחזור בעתיד, תצטרך לבקש הצטרפות מחדש ולחכות לאישור.\n\n"
             "האם אתה בטוח?",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(
@@ -2198,7 +2205,7 @@ async def on_account_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data.clear()
         await query.edit_message_text(
             "🗑 *הכל נמחק*\n\nכל המידע שלך הוסר מהמערכת לצמיתות.\n\n"
-            "תודה שניסית! אם תרצה לחזור מתישהו - שלח /start ונתחיל מאפס.",
+            "תודה שניסית! אם תרצה לחזור מתישהו - שלח /start ותוכל לבקש הצטרפות מחדש.",
             parse_mode="Markdown",
         )
         # Clear the menu too: leaving it up would offer actions that now

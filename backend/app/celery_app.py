@@ -14,6 +14,7 @@ Three separate processes point at this same module:
 from celery import Celery
 from celery.schedules import crontab
 
+from app.core import clock
 from app.core.config import settings
 
 redis_url = f"redis://{settings.redis_host}:{settings.redis_port}/0"
@@ -31,7 +32,7 @@ celery_app = Celery(
 
 # Beat schedule times are in UTC by default - set explicitly so "06:00"
 # means 06:00 Israel time, not UTC.
-celery_app.conf.timezone = "Asia/Jerusalem"
+celery_app.conf.timezone = clock.LOCAL_TZ.key  # "Asia/Jerusalem" - one definition, in clock.py
 
 celery_app.conf.beat_schedule = {
     # Twice a day: 08:00 catches the previous night's finalized sleep/HRV

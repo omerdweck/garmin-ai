@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.core import clock
 from app.core.crypto import decrypt
 from app.core.garmin_client import (
     GarminAuthError,
@@ -177,7 +178,7 @@ def _sync_race_predictions(
     DailyMetric row to carry it would put a row in the table for a day the
     user's watch recorded nothing.
     """
-    end = date_type.today()
+    end = clock.today()
     start = end - timedelta(days=days_back - 1)
     predictions = get_race_predictions(garmin_session, start.isoformat(), end.isoformat())
     if not predictions:
@@ -334,7 +335,7 @@ def sync_user_garmin_data(
             session.commit()
 
         for days_ago in range(days_back):
-            target_date = date_type.today() - timedelta(days=days_ago)
+            target_date = clock.today() - timedelta(days=days_ago)
             payload = _fetch_daily_payload(garmin_session, target_date.isoformat())
             _upsert_daily_metric(session, user_id, target_date, payload)
             if pause_seconds:

@@ -17,6 +17,7 @@ from typing import Optional
 
 from sqlmodel import Session, col, select
 
+from app.core import clock
 from app.models.activity import Activity
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
@@ -174,7 +175,7 @@ def _date_note(value_date: Optional[date_type], reference: Optional[date_type]) 
 
 def _recent_metrics(session: Session, user_id: int, days: int = LOOKBACK_DAYS) -> list[DailyMetric]:
     """Most recent first, so callers can take [0] for latest or scan for the first non-null field."""
-    cutoff = date_type.today() - timedelta(days=days)
+    cutoff = clock.today() - timedelta(days=days)
     return list(
         session.exec(
             select(DailyMetric)
@@ -303,7 +304,7 @@ def format_last_activity(session: Session, user_id: int) -> str:
         return _rtl("🏃 עדיין לא נמצאו אימונים 🤔\nנסה ללחוץ על 🔄 סנכרון.")
 
     label = ACTIVITY_TYPE_LABELS.get(activity.activity_type or "", activity.activity_type or "אימון")
-    days_ago = (date_type.today() - activity.start_time.date()).days
+    days_ago = (clock.today() - activity.start_time.date()).days
     when = "היום" if days_ago == 0 else "אתמול" if days_ago == 1 else f"לפני {days_ago} ימים"
 
     lines = [
@@ -558,7 +559,7 @@ def format_week(session: Session, user_id: int) -> str:
     if not metrics:
         return NO_DATA
 
-    since = date_type.today() - timedelta(days=7)
+    since = clock.today() - timedelta(days=7)
     activities = list(
         session.exec(
             select(Activity).where(Activity.user_id == user_id, Activity.start_time >= since)

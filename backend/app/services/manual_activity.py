@@ -19,6 +19,7 @@ from typing import Optional
 
 from sqlmodel import Session, col, select
 
+from app.core import clock
 from app.models.activity import SOURCE_MANUAL, Activity
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ def build_start_time(day_offset: int) -> datetime:
     Asking for a time would be a whole extra step to buy precision nothing
     here uses.
     """
-    day = datetime.now() - timedelta(days=day_offset)
+    day = clock.now_local_naive() - timedelta(days=day_offset)
     if day_offset == 0:
         return day
     return datetime.combine(day.date(), time(12, 0))

@@ -8,11 +8,11 @@ something Celery can schedule/queue/retry".
 
 import logging
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
+from app.core import clock
 from app.celery_app import celery_app
 from app.core.claude_client import (
     ClaudeAuthError,
@@ -42,9 +42,6 @@ from app.services.metrics_view import (
 )
 
 logger = logging.getLogger(__name__)
-
-LOCAL_TZ = ZoneInfo("Asia/Jerusalem")
-
 
 def _warn_if_watch_stale(session: Session, user: User) -> None:
     """
@@ -327,7 +324,7 @@ def dispatch_calorie_reminders() -> None:
     selected by three different hourly runs - which is the point, and is why
     the hour is matched against any of the three columns rather than one.
     """
-    current_hour = datetime.now(LOCAL_TZ).hour
+    current_hour = clock.now_local().hour
 
     with Session(engine) as session:
         user_ids = session.exec(
@@ -382,7 +379,7 @@ def dispatch_weekly_summaries() -> None:
         logger.info("Skipping weekly summaries - ANTHROPIC_API_KEY is not configured")
         return
 
-    now = datetime.now(LOCAL_TZ)
+    now = clock.now_local()
     weekday = week_index(now)
 
     with Session(engine) as session:
@@ -413,7 +410,7 @@ def dispatch_daily_summaries() -> None:
         logger.info("Skipping daily summaries - ANTHROPIC_API_KEY is not configured")
         return
 
-    current_hour = datetime.now(LOCAL_TZ).hour
+    current_hour = clock.now_local().hour
 
     with Session(engine) as session:
         user_ids = session.exec(

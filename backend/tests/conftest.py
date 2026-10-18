@@ -28,12 +28,10 @@ os.environ.setdefault("FERNET_KEY", "-KsPbgqFFBtshsrKRvGker143w1spbSDASFGp0dRV0E
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "000000:test-token")
 os.environ["ANTHROPIC_API_KEY"] = ""  # no test may reach the real API
 
-# The app stores UTC in `timestamp without time zone` columns and reads naive
-# values back as UTC. That only holds while the connection's time zone is
-# UTC - true in production (the postgres:16 image defaults to UTC), but not
-# for a Postgres installed on a laptop in Israel. libpq reads PGTZ, so this
-# pins every test connection to what production actually runs with.
-os.environ["PGTZ"] = "UTC"
+# No PGTZ here on purpose: app/db/session.py pins every connection to UTC
+# itself, and test_clock.py checks that it does. Setting it here as well
+# would hide a regression in exactly the thing being tested.
+os.environ.pop("PGTZ", None)
 
 from datetime import datetime, timezone  # noqa: E402
 
