@@ -18,6 +18,7 @@ this safe to run for many users on one bot.
 
 import json
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -75,10 +76,36 @@ class ClaudeUnavailableError(RuntimeError):
     """Raised for transient problems: network, rate limits, Anthropic outages."""
 
 
+# A ceiling on one API call. The SDK's own default is ten minutes, which is
+# ten minutes of a coach thread (and a database connection) held by a request
+# that is not coming back. A real answer arrives far inside this.
+CLAUDE_TIMEOUT_SECONDS = 120.0
+
+_shared_client: Optional[anthropic.Anthropic] = None
+_shared_client_lock = threading.Lock()
+
+
 def _client() -> anthropic.Anthropic:
+    """
+    One client for the whole process, created on first use.
+
+    A new client per call opened a new HTTPS connection - TLS handshake and
+    all - for every call, including each extra round of a tool-using turn.
+    The shared one keeps connections open and reuses them. The SDK client is
+    safe to share between threads, which matters because the coach runs on
+    several at once.
+    """
+    global _shared_client
     if not settings.is_claude_configured:
         raise ClaudeNotConfiguredError("ANTHROPIC_API_KEY is not set")
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    if _shared_client is None:
+        with _shared_client_lock:
+            if _shared_client is None:  # another thread may have won the race
+                _shared_client = anthropic.Anthropic(
+                    api_key=settings.anthropic_api_key,
+                    timeout=CLAUDE_TIMEOUT_SECONDS,
+                )
+    return _shared_client
 
 
 def _record_usage(session: Session, user_id: int, kind: str, model: str, usage) -> None:

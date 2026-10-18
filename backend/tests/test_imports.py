@@ -22,3 +22,16 @@ def test_bot_application_builds():
     from app.bot import build_application
 
     assert build_application() is not None
+
+
+def test_coach_shares_one_client_with_a_timeout(monkeypatch):
+    from app.core import claude_client
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(claude_client, "_shared_client", None)
+
+    first, second = claude_client._client(), claude_client._client()
+
+    assert first is second  # one connection pool, not a new handshake per call
+    assert first.timeout == claude_client.CLAUDE_TIMEOUT_SECONDS

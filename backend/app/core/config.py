@@ -124,6 +124,24 @@ class Settings(BaseSettings):
     # gate this design has.
     website_registration_enabled: bool = False
 
+    # --- Concurrency ------------------------------------------------------
+    # How many coach conversations may run at the same time. Each one holds
+    # a thread and a database connection for as long as Claude takes to
+    # answer (often 10-30s), so this is the real capacity number of the bot.
+    # Must stay below the database pool (5 + 10 overflow per process), or a
+    # burst of questions would starve the buttons of connections.
+    coach_max_concurrent: int = 8
+
+    # Ceiling on updates the bot holds at once, across all users. Updates
+    # waiting for the same user's previous one count too, so this is set well
+    # above coach_max_concurrent: a waiting update costs almost nothing.
+    bot_max_concurrent_updates: int = 64
+
+    # Updates one user may have waiting behind their own unfinished one.
+    # Beyond that, extra messages are dropped - a stuck finger or a script
+    # must not be able to fill the queue every other user shares.
+    bot_max_pending_per_user: int = 5
+
     @property
     def database_url(self) -> str:
         return (

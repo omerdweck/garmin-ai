@@ -1,6 +1,6 @@
 """
 Minimal helper for pushing a Telegram message from synchronous code
-(Celery tasks). app/bot.py runs its own async Application/Bot instance
+(Celery tasks). app/bot/ runs its own async Application/Bot instance
 to *handle* incoming messages, which doesn't help here - a background
 task has no incoming update to reply to, it needs to proactively send
 one. asyncio.run() is fine for this: each call is a single short-lived
@@ -15,7 +15,7 @@ from telegram.error import BadRequest
 
 from app.core.config import settings
 
-# Same reason as in app/bot.py: python-telegram-bot talks to
+# Same reason as in app/bot/: python-telegram-bot talks to
 # api.telegram.org/bot<TOKEN>/... over httpx, and httpx logs whole URLs at
 # INFO - so the bot token lands in the worker and beat logs too. Set here,
 # at import of the module that actually makes those calls, so every

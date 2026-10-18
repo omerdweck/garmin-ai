@@ -39,7 +39,11 @@ services:
     depends_on:
       - db
       - redis
-    command: celery -A app.celery_app worker --loglevel=info
+    # Four processes on a 2-vCPU server, on purpose: the work is waiting on
+    # Garmin and Claude over the network, not computing, so more processes
+    # than cores keeps them busy. Celery's default (one per core) left a
+    # 15-minute backfill holding half the capacity. ~100MB RAM each.
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4}
 
   beat:
     restart: unless-stopped
