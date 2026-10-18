@@ -34,6 +34,8 @@ from app.services.calorie_tracking import (
     days_since_last_entry,
 )
 from app.services.garmin_sync import sync_user_garmin_data
+from app.services.ai_budget import budget_exhausted
+from app.services.coach_events import deliver as deliver_coach_event
 from app.services.records import format_broken_records
 from app.services.sync_lock import release as release_sync_lock
 from app.services.sync_lock import user_sync_lock
@@ -301,6 +303,9 @@ def send_daily_summary_task(self, user_id: int) -> None:
         user = session.get(User, user_id)
         if user is None or user.telegram_chat_id is None:
             return
+        if budget_exhausted(session):
+            logger.warning("Daily summary skipped for user %s - monthly AI budget reached", user_id)
+            return
 
         try:
             summary = generate_daily_summary(session, user)
@@ -410,6 +415,9 @@ def send_weekly_summary_task(self, user_id: int) -> None:
         user = session.get(User, user_id)
         if user is None or user.telegram_chat_id is None:
             return
+        if budget_exhausted(session):
+            logger.warning("Weekly summary skipped for user %s - monthly AI budget reached", user_id)
+            return
         try:
             summary = generate_weekly_summary(session, user)
         except (ClaudeNotConfiguredError, ClaudeAuthError, ClaudeOutOfCreditError) as exc:
@@ -488,3 +496,28 @@ def dispatch_daily_summaries() -> None:
 
     for index, user_id in enumerate(user_ids):
         send_daily_summary_task.apply_async(args=[user_id], countdown=index * 5)
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=120,
+    soft_time_limit=SUMMARY_SOFT_LIMIT,
+    time_limit=SUMMARY_HARD_LIMIT,
+)
+def deliver_coach_event_task(self, event_id: int) -> None:
+    """
+    Sends one coach event. Every rule about whether it should be sent lives
+    in services/coach_events.deliver; this only adds the retry. A failure
+    leaves the event pending, so the retry picks it up where it stopped.
+    """
+    with Session(engine) as session:
+        try:
+            outcome = deliver_coach_event(session, event_id)
+        except (ClaudeNotConfiguredError, ClaudeAuthError, ClaudeOutOfCreditError) as exc:
+            logger.warning("Coach event %s not delivered - %s", event_id, type(exc).__name__)
+            return
+        except Exception as exc:
+            logger.exception("Coach event %s failed", event_id)
+            raise self.retry(exc=exc)
+    logger.info("Coach event %s: %s", event_id, outcome)

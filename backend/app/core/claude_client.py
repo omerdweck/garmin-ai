@@ -904,7 +904,15 @@ def _load_history(session: Session, user_id: int) -> list[dict]:
     ).all()
     # Query was newest-first (so the LIMIT keeps the *recent* ones); the API
     # needs oldest-first.
-    return [{"role": row.role, "content": row.content} for row in reversed(rows)]
+    history = [{"role": row.role, "content": row.content} for row in reversed(rows)]
+
+    # The coach's unprompted messages (post-workout, alerts) are stored as
+    # assistant turns, so the window can now begin with one - and the API
+    # requires a conversation to open with the user. Drop the leading ones;
+    # the most recent of them still sit later in the window.
+    while history and history[0]["role"] == "assistant":
+        history.pop(0)
+    return history
 
 
 def _store_message(session: Session, user_id: int, role: str, content: str) -> None:

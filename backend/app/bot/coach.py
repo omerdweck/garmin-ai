@@ -245,3 +245,29 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ]
             ),
         )
+
+
+async def on_talk_about_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    The "💬 לדבר על זה" button under every unprompted coach message. Same as
+    entering chat mode from the menu - the message itself is already in the
+    chat history, so the coach knows what "this" refers to.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    if await _require_active(update) is None:
+        return
+
+    if not settings.is_claude_configured:
+        await query.message.reply_text("🤖 המאמן החכם לא מחובר כרגע. שאר הכפתורים עובדים כרגיל.")
+        return
+
+    context.user_data[CHAT_MODE_KEY] = True
+    await query.message.reply_text(
+        "💬 *מצב שיחה*\n\n"
+        "שאל אותי כל דבר על ההודעה הזו - היא כבר אצלי.\n\n"
+        "לחזרה לתפריט - לחץ ⬅️ חזרה לתפריט",
+        parse_mode="Markdown",
+        reply_markup=CHAT_KEYBOARD,
+    )
