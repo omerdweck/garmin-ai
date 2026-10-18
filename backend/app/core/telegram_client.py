@@ -25,26 +25,28 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-async def _send(chat_id: int, text: str, markdown: bool) -> None:
+async def _send(chat_id: int, text: str, markdown: bool, reply_markup=None) -> None:
     bot = Bot(token=settings.telegram_bot_token)
     if not markdown:
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
         return
 
     try:
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
     except BadRequest:
         # Unbalanced * or _ makes Telegram reject the whole message. Losing
         # the content over a formatting character would be far worse than
         # losing the bold, so fall back to plain text.
         logger.warning("Markdown rejected for chat %s, sending as plain text", chat_id)
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 
-def send_telegram_message(chat_id: int, text: str, markdown: bool = True) -> None:
+def send_telegram_message(chat_id: int, text: str, markdown: bool = True, reply_markup=None) -> None:
     """
     Markdown defaults on: without it, formatted messages built elsewhere in
     the app arrived with their literal `*` characters visible, which is how
     this was originally shipped by mistake.
+
+    `reply_markup` is an InlineKeyboardMarkup, for messages that carry buttons.
     """
-    asyncio.run(_send(chat_id, text, markdown))
+    asyncio.run(_send(chat_id, text, markdown, reply_markup))

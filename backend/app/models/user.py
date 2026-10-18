@@ -101,4 +101,10 @@ class User(SQLModel, table=True):
     # only offers whole hours and Beat only wakes up hourly anyway.
     daily_summary_hour: Optional[int] = None
 
+    # The two messages the coach sends unprompted, each switchable on its own
+    # from Settings. On by default - they are the point of the coach being
+    # proactive - with a server default so every existing user gets them too.
+    notify_post_workout: bool = Field(default=True, sa_column_kwargs={"server_default": "true"})
+    notify_anomalies: bool = Field(default=True, sa_column_kwargs={"server_default": "true"})
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

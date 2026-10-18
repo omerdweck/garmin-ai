@@ -38,6 +38,18 @@ celery_app = Celery(
 # sits idle.
 celery_app.conf.worker_prefetch_multiplier = 1
 
+# Two queues, two workers. Anything that waits on Claude (10-30s a call)
+# goes to "coach"; syncs and dispatchers stay on the default queue. Without
+# the split, a burst of summaries occupies every worker process and the
+# syncs - including the one a user just asked for with 🔄 - wait behind it.
+COACH_QUEUE = "coach"
+celery_app.conf.task_default_queue = "celery"
+celery_app.conf.task_routes = {
+    "app.tasks.send_daily_summary_task": {"queue": COACH_QUEUE},
+    "app.tasks.send_weekly_summary_task": {"queue": COACH_QUEUE},
+    "app.tasks.deliver_coach_event_task": {"queue": COACH_QUEUE},
+}
+
 celery_app.conf.timezone = clock.LOCAL_TZ.key  # "Asia/Jerusalem" - one definition, in clock.py
 
 celery_app.conf.beat_schedule = {

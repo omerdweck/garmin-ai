@@ -65,3 +65,9 @@ def test_every_menu_button_has_a_handler_before_the_coach(handlers):
 def test_narrow_callback_patterns_come_first(handlers, narrow, broad):
     main = handlers[0]
     assert _pattern_position(main, narrow) < _pattern_position(main, broad)
+
+
+def test_new_buttons_are_wired(handlers):
+    main = handlers[0]
+    for pattern in (r"^notify:", r"^talk:"):
+        _pattern_position(main, pattern)  # raises if missing

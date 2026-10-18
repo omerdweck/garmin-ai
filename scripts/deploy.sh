@@ -38,7 +38,7 @@ echo "==> verifying what is ACTUALLY running"
 EXPECTED=$(git rev-parse --short HEAD)
 FAILED=0
 
-for svc in bot worker api; do
+for svc in bot worker worker_coach api; do
     # Import the app inside the container: a container that starts but cannot
     # import its own modules is a broken deploy that `ps` still calls healthy.
     if $COMPOSE exec -T "$svc" python -c "import app.models, app.core.claude_client" >/dev/null 2>&1; then

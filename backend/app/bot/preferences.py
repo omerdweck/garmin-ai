@@ -261,3 +261,64 @@ async def on_account_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Clear the menu too: leaving it up would offer actions that now
         # resolve to "unknown user".
         await query.message.chat.send_message("👋", reply_markup=ReplyKeyboardRemove())
+
+
+# --------------------------------------------------------------------------
+# The coach's unprompted messages
+# --------------------------------------------------------------------------
+
+# callback suffix -> (User column, label). The summaries are not here: they
+# already have their own hour pickers, where "no hour" means off.
+NOTIFY_OPTIONS = {
+    "post_workout": ("notify_post_workout", "🏃 הודעה אחרי כל אימון"),
+    "anomalies": ("notify_anomalies", "⚠️ התראה כשמדד חורג מהרגיל"),
+}
+
+
+def _notify_keyboard(user) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{'✅' if getattr(user, column) else '❌'} {label}",
+                callback_data=f"notify:toggle:{key}",
+            )
+        ]
+        for key, (column, label) in NOTIFY_OPTIONS.items()
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+NOTIFY_TEXT = (
+    "📣 *הודעות מהמאמן*\n\n"
+    "חוץ מהסיכום היומי והשבועי, המאמן שולח הודעה רק כשקורה משהו:\n"
+    "• אחרי אימון - סיכום קצר וניתוח\n"
+    "• כשמדד חורג מהרגיל שלך בימים האחרונים - לכל היותר פעם ביום\n\n"
+    "לחיצה מדליקה או מכבה 👇"
+)
+
+
+async def on_notify_setting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        if user is None:
+            await query.edit_message_text("עדיין לא התחלנו - שלח /start 🔗")
+            return
+
+        if len(parts) == 3 and parts[1] == "toggle" and parts[2] in NOTIFY_OPTIONS:
+            column, _ = NOTIFY_OPTIONS[parts[2]]
+            setattr(user, column, not getattr(user, column))
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+            # Edit in place: the ✅/❌ flips under the user's finger, which is
+            # the confirmation - no extra "saved" message to scroll past.
+            await query.edit_message_reply_markup(reply_markup=_notify_keyboard(user))
+            return
+
+        keyboard = _notify_keyboard(user)
+
+    await query.message.reply_text(NOTIFY_TEXT, parse_mode="Markdown", reply_markup=keyboard)

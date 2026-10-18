@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app.models.calorie_entry import CalorieBurnOverride, CalorieEntry
 from app.models.chat_message import ChatMessage
+from app.models.coach_event import CoachEvent
 from app.models.daily_metric import DailyMetric
 from app.models.join_request import STATUS_APPROVED, JoinRequest
 from app.models.meal_plan import MealOption, MealPlan
@@ -27,6 +28,7 @@ def _fill_every_table(session, make_activity, user):
     make_activity(user)
     session.add(DailyMetric(user_id=user.id, date=date.today()))
     session.add(ChatMessage(user_id=user.id, role="user", content="hi"))
+    session.add(CoachEvent(user_id=user.id, kind="post_workout", key="post_workout:1"))
     session.add(UsageEvent(user_id=user.id, kind="chat", model="m"))
     session.add(CalorieEntry(user_id=user.id, entry_date=date.today(), calories=500))
     session.add(CalorieBurnOverride(user_id=user.id, date=date.today(), calories=2400))

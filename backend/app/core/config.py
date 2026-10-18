@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     # gate this design has.
     website_registration_enabled: bool = False
 
+    # Ceiling on what the scheduled and proactive AI work may spend per
+    # calendar month, for the whole system: daily and weekly summaries and
+    # the coach's own messages. Separate from the per-user limits above,
+    # which only cover conversations a user starts - nothing else stops a bug
+    # that sends a thousand "workout analysed" messages. Reaching it stops
+    # those messages (never the chat) and tells the owner once.
+    ai_monthly_budget_usd: float = 30.0
+
     # --- Concurrency ------------------------------------------------------
     # How many coach conversations may run at the same time. Each one holds
     # a thread and a database connection for as long as Claude takes to

@@ -26,7 +26,25 @@ services:
     # Garmin and Claude over the network, not computing, so more processes
     # than cores keeps them busy. Celery's default (one per core) left a
     # 15-minute backfill holding half the capacity. ~100MB RAM each.
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4}
+    # Default queue only: syncs and the hourly dispatchers. Anything that
+    # waits on Claude runs in worker_coach below, so it can never hold
+    # these up.
+    command: celery -A app.celery_app worker -Q celery --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4}
+
+  worker_coach:
+    restart: unless-stopped
+    build: ./backend
+    volumes:
+      - ./backend:/code
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    # The AI queue: summaries and the coach's own messages. Two processes -
+    # each call is mostly waiting on Claude, and the monthly budget, not
+    # this number, is what limits how much of it happens.
+    command: celery -A app.celery_app worker -Q coach -n coach@%h --loglevel=info --concurrency=${CELERY_COACH_CONCURRENCY:-2}
 
   beat:
     restart: unless-stopped

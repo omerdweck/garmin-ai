@@ -377,6 +377,17 @@ your responsibility.
   Coach calls run on their own thread pool (`COACH_MAX_CONCURRENT`, default
   8) with one shared Anthropic client. In the worker, a Redis lock allows
   one Garmin sync per user at a time, and every task has a hard time limit.
+- **Unprompted messages go through one pipeline.** Something that happened
+  (a synced workout, a drifting metric) is recorded once as a `coach_event`
+  — unique per user and key, so a re-run cannot send it twice — and
+  `services/coach_events.deliver` decides whether it is sent: the user's
+  switches in Settings, at most one anomaly alert per Israeli day, the
+  monthly AI budget, and whether the account is still connected. Sent
+  messages carry a "💬 talk about it" button and are filed in the chat
+  history, so the coach knows what the user is replying to.
+- **AI work has its own queue.** Summaries and coach messages run on the
+  `coach` queue in a separate `worker_coach` container; syncs never wait
+  behind them. `AI_MONTHLY_BUDGET_USD` caps that work for the whole system.
 - **Time: Israel for the calendar, UTC for bookkeeping.** "Today", reminder
   and summary hours, and a workout's `start_time` (Garmin's local wall
   clock) are Israel time. `created_at`, `last_sync_at` and every other
