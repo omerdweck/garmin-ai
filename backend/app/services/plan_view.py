@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, col, delete, select
 
-from app.models.plan_session import DAY_NAMES_HE, PlanSession
+from app.models.plan_session import DAY_NAMES_HE, PlanSession, week_index
 from app.models.training_plan import TrainingPlan
 
 RLM = "‏"
@@ -165,9 +165,7 @@ def format_upcoming_week(session: Session, user_id: int) -> str:
 
     for offset in range(7):
         day = today + timedelta(days=offset)
-        # isoweekday() is Monday=1..Sunday=7; % 7 maps Sunday to 0, matching
-        # the stored week.
-        index = day.isoweekday() % 7
+        index = week_index(day)
         items = by_day.get(index, [])
 
         marker = " _(היום)_" if offset == 0 else (" _(מחר)_" if offset == 1 else "")

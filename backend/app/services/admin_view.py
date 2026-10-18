@@ -15,9 +15,8 @@ from sqlmodel import Session, func, select
 
 from app.core.config import settings
 from app.models.garmin_account import GarminAccount
-from app.models.usage_event import UsageEvent
 from app.models.user import User
-from app.services.signup_control import decide, pending_requests, signup_status
+from app.services.signup_control import pending_requests, signup_status
 from app.services.usage_limits import usage_report
 
 RLM = "‏"

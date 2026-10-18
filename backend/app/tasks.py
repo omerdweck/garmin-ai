@@ -26,6 +26,7 @@ from app.core.garmin_client import GarminAuthError, GarminRateLimitError
 from app.core.telegram_client import send_telegram_message
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
+from app.models.plan_session import week_index
 from app.models.user import User
 from app.services.calorie_tracking import (
     ABANDON_AFTER_DAYS,
@@ -382,9 +383,7 @@ def dispatch_weekly_summaries() -> None:
         return
 
     now = datetime.now(LOCAL_TZ)
-    # isoweekday() is Monday=1..Sunday=7; % 7 gives Sunday=0, matching the
-    # week the rest of the app stores.
-    weekday = now.isoweekday() % 7
+    weekday = week_index(now)
 
     with Session(engine) as session:
         user_ids = session.exec(

@@ -1181,7 +1181,7 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if user is None:
                 await query.edit_message_text("לא נמצא משתמש.")
                 return
-            activity = create_manual_activity(
+            create_manual_activity(
                 session,
                 user_id=user.id,
                 activity_type=draft["type"],

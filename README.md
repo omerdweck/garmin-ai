@@ -131,6 +131,8 @@ backend/app/
     usage_limits.py   Per-user quotas and the usage report
     admin_view.py     Owner-facing reports
   routers/            FastAPI endpoints (website, currently paused)
+backend/tests/        pytest suite (see "Tests" below)
+backend/tools/        One-off developer scripts, never run in production
 scripts/
   deploy.sh           Pull, build, migrate, recreate, verify
   backup.sh           Encrypted nightly database dump
@@ -212,6 +214,36 @@ Two recurring gotchas:
   for `AutoString` columns. Add it by hand.
 - `docker-compose.prod.yml` has no bind mounts, so running autogenerate on
   the server writes the file inside a container that `--rm` then deletes.
+
+### Tests
+
+```bash
+docker compose --profile test run --rm tests
+```
+
+Runs `ruff` and `pytest` against a throwaway Postgres that lives in memory
+and disappears with the container. The test services have no `env_file`, so
+they never see a real secret, and `tests/conftest.py` refuses any database
+whose name does not end in `_test` — every test ends by dropping all tables.
+
+The same checks run on GitHub for every push (`.github/workflows/ci.yml`).
+A red X there means: do not deploy that commit.
+
+What is covered, chosen by what would hurt most if it broke silently:
+
+- **No coach tool can read or change another user's data** — and a new
+  `get_` tool that is not added to the check fails the suite.
+- **Account deletion leaves no row behind** in any user-owned table, and a
+  new table that the test does not fill fails it.
+- **Migrations build exactly the schema the models describe** — a model
+  column with no migration passes every other test and crashes production.
+- The Sunday-first week, coach plans staying drafts until approved, one
+  stale-watch warning per episode, and every entry point importing.
+
+`tools/capture_garmin_fixtures.py` saves real, scrubbed Garmin responses
+for one workout into `tests/fixtures/garmin/`, for building against the
+undocumented per-workout endpoints. Run it once, then read the files before
+committing them.
 
 ---
 

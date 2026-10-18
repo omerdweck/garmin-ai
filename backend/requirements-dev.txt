@@ -1,0 +1,5 @@
+# Tools for development and CI only - never installed on the server.
+# The production image installs requirements.txt alone.
+-r requirements.txt
+pytest==8.3.3
+ruff==0.6.9

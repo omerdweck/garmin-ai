@@ -16,7 +16,6 @@ thing a user can do.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from sqlmodel import Session, func, select
 
