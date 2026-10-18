@@ -18,13 +18,13 @@ this safe to run for many users on one bot.
 
 import json
 import logging
-from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import anthropic
 from sqlmodel import Session, col, delete, select
 
+from app.core import clock
 from app.core.claude_pricing import calculate_cost
 from app.services.calorie_tracking import (
     burned_on,
@@ -533,7 +533,7 @@ def _activity_to_dict(activity: Activity) -> dict:
 
 def fetch_daily_metrics(session: Session, user_id: int, days: int) -> list[dict]:
     days = max(1, min(days, 60))
-    cutoff = date_type.today() - timedelta(days=days)
+    cutoff = clock.today() - timedelta(days=days)
     metrics = session.exec(
         select(DailyMetric)
         .where(DailyMetric.user_id == user_id, DailyMetric.date >= cutoff)
@@ -643,7 +643,7 @@ def fetch_calorie_status(session: Session, user: User, days: int = 7) -> dict:
         return {"tracking": False}
 
     days = max(1, min(days, 30))
-    today = date_type.today()
+    today = clock.today()
     entries = []
     for offset in range(days):
         day = today - timedelta(days=offset)
@@ -903,7 +903,7 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
     # Today's date is prepended to the *user turn*, never to the system
     # prompt: the system prompt is the cached prefix, and a date inside it
     # would change daily and silently destroy every cache hit.
-    dated_message = f"[היום: {date_type.today().isoformat()}]\n{user_message}"
+    dated_message = f"[היום: {clock.today().isoformat()}]\n{user_message}"
     messages: list[dict] = history + [{"role": "user", "content": dated_message}]
 
     response = None
@@ -980,7 +980,7 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     if not metrics and not activities:
         return None
 
-    today_date = date_type.today()
+    today_date = clock.today()
     today = today_date.isoformat()
 
     tomorrow_index = week_index(today_date + timedelta(days=1))

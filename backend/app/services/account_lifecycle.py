@@ -20,7 +20,6 @@ Deliberate asymmetry between the two ways a link can end:
     and terms acceptance still stay - only the credential is gone)
 """
 
-from datetime import date as date_type
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
@@ -32,7 +31,9 @@ from sqlmodel import Session, SQLModel, delete, select
 # in it - which would silently skip that table on account deletion.
 import app.models  # noqa: F401
 
+from app.core import clock
 from app.models.garmin_account import GarminAccount
+from app.models.join_request import JoinRequest
 from app.models.user import User
 
 
@@ -94,7 +95,7 @@ def reconnect(session: Session, user_id: int) -> bool:
     session.add(account)
     session.commit()
 
-    return account.last_sync_at is not None and account.last_sync_at.date() == date_type.today()
+    return account.last_sync_at is not None and clock.utc_to_local_date(account.last_sync_at) == clock.today()
 
 
 def _user_owned_tables() -> list:
@@ -117,19 +118,32 @@ def _user_owned_tables() -> list:
     ]
 
 
-def delete_user_completely(session: Session, user_id: int) -> None:
+def delete_user_completely(session: Session, user_id: int) -> Optional[int]:
     """
     Erases everything we hold about a user, after which they're
-    indistinguishable from someone who never used the bot.
+    indistinguishable from someone who never used the bot - including the
+    owner's approval. Someone who deletes their account and comes back goes
+    through the join request again, exactly like a stranger would.
 
     Any future table with a user_id column is picked up automatically - see
     _user_owned_tables for why that is derived rather than listed by hand.
+    The join request is the one exception that must be named: it is keyed by
+    telegram_chat_id, because it exists before a User row does.
+
+    Returns the deleted user's chat id, so the bot can also drop whatever it
+    holds about that chat in memory.
     """
+    user = session.get(User, user_id)
+    chat_id = user.telegram_chat_id if user is not None else None
+
     for table in _user_owned_tables():
         session.exec(delete(table).where(table.c.user_id == user_id))
 
-    user = session.get(User, user_id)
+    if chat_id is not None:
+        session.exec(delete(JoinRequest).where(JoinRequest.telegram_chat_id == chat_id))
+
     if user is not None:
         session.delete(user)
 
     session.commit()
+    return chat_id

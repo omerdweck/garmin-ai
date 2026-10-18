@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlmodel import Session, col, func, select
 
+from app.core import clock
 from app.models.activity import Activity
 from app.models.daily_metric import DailyMetric
 from app.models.plan_session import PlanSession
@@ -135,7 +136,7 @@ def build_weekly_facts(session: Session, user_id: int, end: Optional[date_type] 
     it. Values Garmin never recorded are absent rather than zero - a week
     the watch was off did not have zero sleep.
     """
-    end = end or date_type.today()
+    end = end or clock.today()
     this_start, this_end = _window(end, 0)
     prev_start, prev_end = _window(end, 1)
 

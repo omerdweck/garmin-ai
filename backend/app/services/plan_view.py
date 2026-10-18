@@ -6,11 +6,11 @@ showing it or deleting it costs nothing and should never spend a token.
 Claude is for building and revising a plan - not for reciting one.
 """
 
-from datetime import date as date_type
 from datetime import timedelta
 
 from sqlmodel import Session, col, delete, select
 
+from app.core import clock
 from app.models.plan_session import DAY_NAMES_HE, PlanSession, week_index
 from app.models.training_plan import TrainingPlan
 
@@ -160,7 +160,7 @@ def format_upcoming_week(session: Session, user_id: int) -> str:
     for item in sessions:
         by_day.setdefault(item.day_of_week, []).append(item)
 
-    today = date_type.today()
+    today = clock.today()
     lines = [_rtl("📋 *התוכנית שלך - השבוע הקרוב*"), ""]
 
     for offset in range(7):

@@ -21,11 +21,12 @@ network allows.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
+from app.core import clock
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.email import EmailNotConfiguredError, send_verification_email
@@ -76,7 +77,7 @@ def register(
         email=data.email,
         hashed_password=hash_password(data.password),
         verification_token=token,
-        verification_token_expires_at=datetime.utcnow() + VERIFICATION_TOKEN_LIFETIME,
+        verification_token_expires_at=clock.now_utc().replace(tzinfo=None) + VERIFICATION_TOKEN_LIFETIME,
     )
     session.add(user)
     session.commit()
@@ -106,7 +107,7 @@ def verify_email(token: str, session: Session = Depends(get_session)) -> dict:
     if user is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification token")
 
-    if user.verification_token_expires_at is None or datetime.utcnow() > user.verification_token_expires_at:
+    if user.verification_token_expires_at is None or clock.now_utc().replace(tzinfo=None) > user.verification_token_expires_at:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification token has expired")
 
     # single-use: clear the token so this same link can never verify anything again

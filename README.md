@@ -234,7 +234,10 @@ What is covered, chosen by what would hurt most if it broke silently:
 - **No coach tool can read or change another user's data** — and a new
   `get_` tool that is not added to the check fails the suite.
 - **Account deletion leaves no row behind** in any user-owned table, and a
-  new table that the test does not fill fails it.
+  new table that the test does not fill fails it. The join request goes
+  too, so a returning person needs the owner's approval again.
+- **"Today" is the Israeli date**, including just after midnight, and no
+  module reads the server clock directly.
 - **Migrations build exactly the schema the models describe** — a model
   column with no migration passes every other test and crashes production.
 - The Sunday-first week, coach plans staying drafts until approved, one
@@ -350,6 +353,12 @@ your responsibility.
 - **Every environment variable flows through `app/core/config.py`.** Nothing
   reads `os.environ` directly, so "where does configuration come from" has
   one answer.
+- **Time: Israel for the calendar, UTC for bookkeeping.** "Today", reminder
+  and summary hours, and a workout's `start_time` (Garmin's local wall
+  clock) are Israel time. `created_at`, `last_sync_at` and every other
+  "when did this happen" column are UTC, and every DB connection is pinned
+  to UTC. All of it goes through `app/core/clock.py`; a test fails the build
+  if anything calls `date.today()` or `datetime.now()` directly.
 - **`garminconnect` is imported in exactly one module.** It is an unofficial
   client; when Garmin changes something, one file needs fixing.
 

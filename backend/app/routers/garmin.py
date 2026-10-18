@@ -5,11 +5,12 @@ Fetching and storing real health data on a schedule is a separate,
 later stage (Celery) - this stage only establishes and verifies the link.
 """
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from app.core import clock
 from app.api.deps import get_current_user
 from app.core.crypto import decrypt, encrypt
 from app.core.garmin_client import (
@@ -117,7 +118,7 @@ def test_garmin_pull(
 
     try:
         garmin_session = resume_garmin_session(decrypt(account.encrypted_token))
-        return get_daily_summary(garmin_session, date.today().isoformat())
+        return get_daily_summary(garmin_session, clock.today().isoformat())
     except GarminAuthError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
