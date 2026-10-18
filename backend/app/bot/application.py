@@ -31,6 +31,7 @@ from app.bot.common import BTN_ACTIVITIES, BTN_ADD_ACTIVITY, BTN_CALORIES, BTN_C
 from app.bot.manual_activity import add_activity_start, on_manual_step, on_manual_text
 from app.bot.metrics import _quick_lookup, on_metric_drilldown, show_metrics, sync_now
 from app.bot.onboarding import ASK_EMAIL, ASK_PASSWORD, AWAITING_TERMS, ask_password, cancel, do_link, on_join_decision, on_join_request, on_terms_response, start
+from app.bot.profile import on_profile_action, show_profile
 from app.bot.plans import on_plan_action, on_plan_cancel, show_plan
 from app.bot.preferences import on_account_action, on_notify_setting, on_settings_action, on_summary_hour, on_weekly_setting, show_settings
 
@@ -65,6 +66,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("sync", sync_now))
     application.add_handler(CommandHandler("records", _quick_lookup(format_records)))
     application.add_handler(CommandHandler("settings", show_settings))
+    application.add_handler(CommandHandler("profile", show_profile))
     # Deliberately absent from set_my_commands below - see admin().
     application.add_handler(CommandHandler("admin", admin))
 
@@ -92,6 +94,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(on_weekly_setting, pattern=r"^weekly:"))
     application.add_handler(CallbackQueryHandler(on_notify_setting, pattern=r"^notify:"))
     application.add_handler(CallbackQueryHandler(on_talk_about_it, pattern=r"^talk:"))
+    application.add_handler(CallbackQueryHandler(on_profile_action, pattern=r"^profile:"))
     # plancancel: before plan: - the narrower pattern has to win.
     application.add_handler(CallbackQueryHandler(on_plan_cancel, pattern=r"^plancancel:"))
     application.add_handler(CallbackQueryHandler(on_plan_action, pattern=r"^plan:"))
@@ -135,6 +138,7 @@ async def _register_commands(application: Application) -> None:
             ("menu", "הצג את תפריט הכפתורים"),
             ("sync", "סנכרון מול גרמין"),
             ("settings", "הגדרות"),
+            ("profile", "מה המאמן יודע עליי"),
             ("start", "חיבור חשבון גרמין"),
         ]
     )

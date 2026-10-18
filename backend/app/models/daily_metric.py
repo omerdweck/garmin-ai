@@ -51,6 +51,23 @@ class DailyMetric(SQLModel, table=True):
     avg_sleep_respiration: Optional[float] = None
     avg_sleep_stress: Optional[float] = None
 
+    # The deeper side of the same sleep response. All of it was already
+    # arriving and kept in raw_json; these columns make it queryable and
+    # visible to the coach. The migration that added them filled them in
+    # from raw_json for every night already stored, without asking Garmin
+    # again. SpO2 is measured only if Pulse Ox during sleep is switched on
+    # in the watch - without it these stay None, never a guessed value.
+    sleep_score: Optional[int] = None
+    sleep_score_qualifier: Optional[str] = None  # e.g. "GOOD", "FAIR", "POOR"
+    avg_spo2: Optional[float] = None
+    lowest_spo2: Optional[float] = None
+    lowest_sleep_respiration: Optional[float] = None
+    restless_moments: Optional[int] = None
+    sleep_body_battery_change: Optional[int] = None
+    # Wall-clock times on the watch (Israel), like Activity.start_time.
+    sleep_start_local: Optional[datetime] = None
+    sleep_end_local: Optional[datetime] = None
+
     # from Garmin's HRV endpoint - lastNightAvg/status, not the many
     # intraday readings (those are exactly the time-series data we're
     # not storing here)

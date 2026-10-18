@@ -34,6 +34,7 @@ from app.models.activity import Activity
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
 from app.services.records import sync_personal_records
+from app.services.sleep_details import apply_sleep_details
 
 
 def _seconds_to_minutes(seconds) -> int | None:
@@ -108,6 +109,7 @@ def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, 
     metric.awake_minutes = _seconds_to_minutes(sleep_dto.get("awakeSleepSeconds"))
     metric.avg_sleep_respiration = sleep_dto.get("averageRespirationValue")
     metric.avg_sleep_stress = sleep_dto.get("avgSleepStress")
+    apply_sleep_details(metric, sleep)
 
     metric.avg_hrv = hrv_summary.get("lastNightAvg")
     metric.hrv_status = hrv_summary.get("status")

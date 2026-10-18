@@ -385,6 +385,18 @@ your responsibility.
   monthly AI budget, and whether the account is still connected. Sent
   messages carry a "💬 talk about it" button and are filed in the chat
   history, so the coach knows what the user is replying to.
+- **The coach has a long-term memory, and the athlete can see all of it.**
+  `athlete_profile` holds structured facts (sports, free days, equipment,
+  pool length, FTP, limitations) and `coach_note` short facts the coach
+  chose to remember — only what the athlete said, never conclusions.
+  `/profile` shows everything with a delete button per note. In the prompt
+  the profile sits *after* the cache breakpoint, so the cached prefix stays
+  identical for every user.
+- **Deep sleep comes from data we already had.** Sleep score, SpO2,
+  respiration, restlessness and overnight Body Battery are parsed on every
+  sync, and the migration that added the columns filled them for the whole
+  history from `raw_json` with plain SQL — no Garmin requests. A test runs
+  both paths on the same response and checks they agree.
 - **AI work has its own queue.** Summaries and coach messages run on the
   `coach` queue in a separate `worker_coach` container; syncs never wait
   behind them. `AI_MONTHLY_BUDGET_USD` caps that work for the whole system.

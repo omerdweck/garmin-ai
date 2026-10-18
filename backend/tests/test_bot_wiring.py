@@ -69,5 +69,5 @@ def test_narrow_callback_patterns_come_first(handlers, narrow, broad):
 
 def test_new_buttons_are_wired(handlers):
     main = handlers[0]
-    for pattern in (r"^notify:", r"^talk:"):
+    for pattern in (r"^notify:", r"^talk:", r"^profile:"):
         _pattern_position(main, pattern)  # raises if missing
