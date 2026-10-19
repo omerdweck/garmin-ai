@@ -82,6 +82,15 @@ new sport — are pure Python and are judged by the workout that *crossed*
 the line, so a month of imported history never turns into a shower of old
 milestones. Switchable in Settings → 📣.
 
+**Workouts on the watch, for every sport** — when the coach prescribes a
+session it builds it as a structured workout (running, walking, hiking,
+cycling, swimming, strength, HIIT, yoga, mobility, cardio), and the athlete
+gets a preview with buttons: 📲 to the watch (today, tomorrow, or the day it
+was planned for), 📄 a file, or 🗑. The "🏋️ בנה אימון" button builds one
+from three taps (sport, length, focus). Files: `.fit` (made by Garmin
+itself, so the watch reads it), and for cycling `.zwo` (Zwift), `.mrc`
+(%FTP) and `.erg` (watts).
+
 **Anomaly alerts** — after every sync, six rules compare the last few days
 with the athlete's *own* previous four weeks: HRV falling three days in a
 row to below their usual, resting HR 5+ above their usual on two of three
@@ -420,6 +429,19 @@ your responsibility.
   sync, and the migration that added the columns filled them for the whole
   history from `raw_json` with plain SQL — no Garmin requests. A test runs
   both paths on the same response and checks they agree.
+- **The coach never writes Garmin JSON.** It writes a small schema of our
+  own (`services/workout_schema.py`, Pydantic), validated per sport: a
+  1:30/km pace, heart-rate zone 7 or an exercise missing from Garmin's
+  1,527-entry catalog comes back to the coach as an error to fix, with the
+  closest catalog names. Pure converters turn it into Garmin's JSON
+  (`workout_garmin.py`) or trainer files (`workout_files.py`). Every Garmin
+  write runs in the worker, keeps what it sent in `workout.sent_json`, and
+  is open per sport: the owner (`ADMIN_CHAT_ID`) can always send, everyone
+  else only for sports listed in `WORKOUT_UPLOAD_SPORTS` - each added after
+  its workouts looked right on the owner's own watch.
+  `tools/capture_workout_fixtures.py` saves Garmin's own JSON for workouts
+  made in Garmin Connect, and the tests then check that ours has the same
+  shape.
 - **Anomaly rules are pure functions.** `services/anomaly_rules.py` takes
   numbers and returns *firing*, *clear* or *unknown* — no database, no
   clock — and every threshold is in `config.py`. *Unknown* is not *clear*:

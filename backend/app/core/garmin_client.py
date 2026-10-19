@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from garminconnect import Garmin
+from garminconnect import exercises as _exercises
 from garminconnect.exceptions import (
     GarminConnectAuthenticationError,
     GarminConnectConnectionError,
@@ -41,6 +42,15 @@ __all__ = [
     "get_training_load",
     "get_race_predictions",
     "get_personal_records",
+    "GarminRequestError",
+    "upload_workout",
+    "schedule_workout",
+    "download_workout_fit",
+    "delete_workout",
+    "unschedule_workout",
+    "exercise_catalog",
+    "list_workouts",
+    "get_workout",
 ]
 
 
@@ -50,6 +60,10 @@ class GarminAuthError(Exception):
 
 class GarminRateLimitError(Exception):
     """Raised when Garmin itself is throttling/blocking login attempts (HTTP 429) - not a credentials problem."""
+
+
+class GarminRequestError(Exception):
+    """Garmin refused a write (e.g. a workout it could not parse). Not throttling, not auth."""
 
 
 def login_to_garmin(email: str, password: str) -> str:
@@ -286,3 +300,71 @@ def get_exercise_sets(session: Garmin, activity_id: int) -> dict:
     other activity types return an empty set list.
     """
     return session.get_activity_exercise_sets(activity_id)
+
+
+# --------------------------------------------------------------------------
+# Workouts - the only place this project WRITES to someone's Garmin account.
+# Every write translates the library's exceptions into ours, so the caller
+# can tell "Garmin is throttling" from "Garmin rejected what we sent".
+# --------------------------------------------------------------------------
+
+
+def _write(call, *args):
+    try:
+        return call(*args)
+    except GarminConnectTooManyRequestsError as exc:
+        raise GarminRateLimitError(str(exc)) from exc
+    except GarminConnectAuthenticationError as exc:
+        raise GarminAuthError(str(exc)) from exc
+    except GarminConnectConnectionError as exc:
+        raise GarminRequestError(str(exc)) from exc
+
+
+def upload_workout(session: Garmin, payload: dict) -> tuple[int, dict]:
+    """Creates the workout in the user's Garmin library. Returns (workout id, what Garmin stored)."""
+    stored = _write(session.upload_workout, payload) or {}
+    workout_id = stored.get("workoutId")
+    if not workout_id:
+        raise GarminRequestError(f"upload returned no workoutId: {str(stored)[:200]}")
+    return int(workout_id), stored
+
+
+def schedule_workout(session: Garmin, workout_id: int, day: str) -> Optional[int]:
+    """Puts it on the Garmin calendar for `day` ('YYYY-MM-DD'); the watch picks it up on its next sync."""
+    result = _write(session.schedule_workout, workout_id, day) or {}
+    scheduled = result.get("workoutScheduleId") or result.get("id")
+    return int(scheduled) if scheduled else None
+
+
+def unschedule_workout(session: Garmin, scheduled_id: int) -> None:
+    """Takes one calendar entry off; the workout stays in the library."""
+    _write(session.unschedule_workout, scheduled_id)
+
+
+def download_workout_fit(session: Garmin, workout_id: int) -> bytes:
+    """The workout as a .fit file, produced by Garmin itself - so it is the format the watch expects."""
+    return _write(session.download_workout, workout_id)
+
+
+def delete_workout(session: Garmin, workout_id: int) -> None:
+    """Removes it from the library; Garmin drops its calendar entries with it."""
+    _write(session.delete_workout, workout_id)
+
+
+def list_workouts(session: Garmin, limit: int = 100) -> list[dict]:
+    """The workouts in the user's Garmin library (read-only)."""
+    return session.get_workouts(0, limit) or []
+
+
+def get_workout(session: Garmin, workout_id: int) -> dict:
+    """One workout, exactly as Garmin stores it (read-only)."""
+    return session.get_workout_by_id(workout_id)
+
+
+def exercise_catalog() -> list[dict]:
+    """
+    Garmin's strength-exercise catalog (~1,500 entries): each a dict with
+    'name' (as the watch shows it), 'category' and 'exercise'. Static data
+    shipped with the library - no request.
+    """
+    return list(_exercises.EXERCISES)

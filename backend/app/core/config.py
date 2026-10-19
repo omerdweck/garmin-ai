@@ -167,6 +167,19 @@ class Settings(BaseSettings):
     anomaly_min_weekly_minutes: int = 90
     anomaly_min_chronic_load: int = 50
 
+    # --- Workouts on the watch ---------------------------------------------
+    # Sports whose workouts may be sent to anyone's Garmin account, comma
+    # separated (e.g. "running,cycling"). Empty by default on purpose: the
+    # Garmin workout API is unofficial, and a sport is opened only after its
+    # workouts were sent once to the owner's own watch and looked right
+    # there. The owner (admin_chat_id) can always send, so that check is
+    # possible before anyone else gets the button.
+    workout_upload_sports: str = ""
+
+    @property
+    def workout_upload_sport_set(self) -> set[str]:
+        return {s.strip() for s in self.workout_upload_sports.split(",") if s.strip()}
+
     # --- Concurrency ------------------------------------------------------
     # How many coach conversations may run at the same time. Each one holds
     # a thread and a database connection for as long as Claude takes to

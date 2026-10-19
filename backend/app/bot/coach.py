@@ -33,6 +33,8 @@ from app.services.usage_limits import QuotaExceeded, check_quota
 from app.bot.calories import CALORIE_KEY
 from app.bot.common import CHAT_KEYBOARD, CHAT_MODE_KEY, MAIN_KEYBOARD, _find_user, _reply, _require_active
 from app.bot.manual_activity import MANUAL_KEY
+from app.bot.workouts import show_new_workouts
+from app.core import clock
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +130,6 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     swallowing the message or spending tokens on something they may have
     typed by accident.
     """
-    chat_id = update.effective_chat.id
-
     if not context.user_data.get(CHAT_MODE_KEY):
         await update.message.reply_text(
             "אני עובד עם הכפתורים שלמטה 👇\n"
@@ -150,6 +150,17 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
+    await run_coach_turn(update, context, update.message.text)
+
+
+async def run_coach_turn(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """
+    One question to the coach and its answer. Shared by typed messages and
+    by buttons that ask the coach something on the user's behalf (the
+    workout builder), so both get the same quota, errors and follow-ups.
+    """
+    chat_id = update.effective_chat.id
+
     def _run() -> str:
         # A fresh session inside the worker thread: SQLModel/SQLAlchemy
         # sessions are not safe to share across threads.
@@ -158,7 +169,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             # Before the call, not after: a ceiling enforced afterwards has
             # already spent the money it exists to protect.
             check_quota(session, user)
-            return chat_with_coach(session, user, update.message.text)
+            return chat_with_coach(session, user, text)
 
     # Typing runs for as long as the answer takes. A single send_action
     # only holds the indicator for about five seconds, and a tool-using
@@ -167,6 +178,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # feels like.
     typing = asyncio.create_task(_keep_typing(update.effective_chat))
     try:
+        started = clock.now_utc()
         reply, tools_used = await asyncio.get_running_loop().run_in_executor(coach_executor, _run)
     except QuotaExceeded as exc:
         # Not an error: the ceiling did its job. Leave chat mode on so the
@@ -174,14 +186,14 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # attached - the free buttons genuinely still work, and saying so
         # turns a refusal into a redirect.
         logger.info("Quota reached for chat_id %s", chat_id)
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             exc.message,
             reply_markup=MAIN_KEYBOARD,
         )
         return
     except ClaudeNotConfiguredError:
         context.user_data[CHAT_MODE_KEY] = False
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             "🤖 *המאמן לא מחובר*\n\nחסר מפתח API. שאר הכפתורים עובדים כרגיל.",
             parse_mode="Markdown",
             reply_markup=MAIN_KEYBOARD,
@@ -189,7 +201,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     except ClaudeOutOfCreditError:
         logger.error("Anthropic credit exhausted (chat_id %s)", chat_id)
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             "💳 *נגמר האשראי במנוי ה-AI*\n\n"
             "אני לא יכול לענות עד שתיטען יתרה בחשבון Anthropic.\n"
             "בינתיים כל שאר הכפתורים עובדים - הנתונים שלך זמינים כרגיל.",
@@ -199,7 +211,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     except ClaudeAuthError:
         logger.error("Anthropic key rejected (chat_id %s)", chat_id)
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             "🔑 *מפתח ה-AI נדחה*\n\n"
             "ייתכן שהמפתח בוטל או הוחלף. צריך לעדכן אותו בהגדרות המערכת.\n"
             "שאר הכפתורים עובדים כרגיל.",
@@ -209,14 +221,14 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     except ClaudeUnavailableError:
         logger.warning("Anthropic temporarily unavailable (chat_id %s)", chat_id)
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             "📡 *שירות ה-AI לא זמין כרגע*\n\nזו תקלה זמנית - נסה שוב בעוד דקה.",
             parse_mode="Markdown",
         )
         return
     except Exception:
         logger.exception("Coach chat failed for chat_id %s", chat_id)
-        await update.message.reply_text("משהו השתבש אצלי 😕 נסה שוב בעוד רגע.")
+        await update.effective_chat.send_message("משהו השתבש אצלי 😕 נסה שוב בעוד רגע.")
         return
     finally:
         # Always stop the indicator, including on every error path above -
@@ -231,6 +243,9 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # approve button is what moves it into tracking - keyed off the tool
     # actually having run rather than off anything in the reply text, which
     # the model is free to word however it likes.
+    if "build_workout" in tools_used:
+        await show_new_workouts(update, chat_id, since=started)
+
     if "set_training_plan" in tools_used:
         await update.effective_chat.send_message(
             "התוכנית הזו עדיין *לא* נכנסה למעקב.\n"

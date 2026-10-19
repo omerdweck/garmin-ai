@@ -42,6 +42,7 @@ BTN_PLAN = "📋 התוכנית שלי"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
 BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
+BTN_BUILD_WORKOUT = "🏋️ בנה אימון"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
@@ -50,7 +51,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_PLAN, BTN_CALORIES],
         [BTN_ADD_ACTIVITY, BTN_SYNC],
         [BTN_COACH, BTN_SETTINGS],
-        [BTN_RECORDS],
+        [BTN_BUILD_WORKOUT, BTN_RECORDS],
     ],
     resize_keyboard=True,
 )
@@ -60,7 +61,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 # one apart from something the user typed.
 MENU_BUTTONS = {
     BTN_METRICS, BTN_ACTIVITIES, BTN_WEEK, BTN_RACES, BTN_PLAN, BTN_CALORIES,
-    BTN_RECORDS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT,
+    BTN_RECORDS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT, BTN_BUILD_WORKOUT,
 }
 
 # Shown only while in chat mode, so the way out is always one visible tap -
