@@ -279,6 +279,25 @@ def format_sleep(session: Session, user_id: int) -> str:
         _rtl(f"_בלילה של {sleep_date.strftime('%d/%m')}_"),
         "",
     ]
+    # Each line only when Garmin measured it - SpO2 in particular needs Pulse
+    # Ox switched on in the watch, and a row of dashes would read as broken.
+    details = []
+    if night.sleep_score is not None:
+        details.append(_rtl(f"⭐ ציון שינה — *{night.sleep_score}*"))
+    if night.sleep_start_local and night.sleep_end_local:
+        details.append(_rtl(
+            f"🛏 {night.sleep_start_local.strftime('%H:%M')} ← {night.sleep_end_local.strftime('%H:%M')}"
+        ))
+    if night.avg_spo2 is not None:
+        low = f" (מינימום {night.lowest_spo2:.0f}%)" if night.lowest_spo2 is not None else ""
+        details.append(_rtl(f"🫁 SpO2 ממוצע — *{night.avg_spo2:.0f}%*{low}"))
+    if night.avg_sleep_respiration is not None:
+        details.append(_rtl(f"🌬 נשימה — *{night.avg_sleep_respiration:.0f}* לדקה"))
+    if night.sleep_body_battery_change is not None:
+        details.append(_rtl(f"🔋 Body Battery בלילה — *{int(night.sleep_body_battery_change):+d}*"))
+    if details:
+        lines.extend(details)
+        lines.append("")
     stages = []
     if night.deep_sleep_minutes is not None:
         stages.append(_rtl(f"🌊 עמוקה — *{night.deep_sleep_minutes}* דקות"))

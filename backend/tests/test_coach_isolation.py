@@ -14,6 +14,7 @@ import pytest
 from sqlmodel import select
 
 from app.core.claude_client import TOOLS, _execute_tool
+from app.models.athlete_profile import AthleteProfile, CoachNote
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MealPlan
 from app.models.personal_record import PersonalRecord
@@ -29,6 +30,7 @@ READ_TOOLS = {
     "get_personal_records": {},
     "get_calorie_status": {"days": 30},
     "get_meal_plan": {},
+    "get_athlete_profile": {},
 }
 
 
@@ -42,6 +44,8 @@ def two_users(session, make_user, make_activity):
     session.add(TrainingPlan(user_id=other.id, discipline="running", plan=SECRET))
     session.add(PersonalRecord(user_id=other.id, record_type="run_5k", value=1234.5))
     session.add(MealPlan(user_id=other.id, approach=SECRET, target_calories=2000))
+    session.add(CoachNote(user_id=other.id, text=SECRET))
+    session.add(AthleteProfile(user_id=other.id, limitations=SECRET))
     session.commit()
     return me, other
 
@@ -87,3 +91,15 @@ def test_deleting_a_meal_plan_does_not_touch_another_users_plan(session, two_use
     _execute_tool(session, me, "delete_meal_plan", {})
 
     assert len(session.exec(select(MealPlan).where(MealPlan.user_id == other.id)).all()) == 1
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("update_athlete_profile", {"limitations": "mine"}),
+    ("remember", {"note": "mine"}),
+])
+def test_profile_writes_stay_with_their_owner(session, two_users, tool, args):
+    me, other = two_users
+    _execute_tool(session, me, tool, args)
+
+    assert session.exec(select(CoachNote).where(CoachNote.user_id == other.id)).one().text == SECRET
+    assert session.exec(select(AthleteProfile).where(AthleteProfile.user_id == other.id)).one().limitations == SECRET

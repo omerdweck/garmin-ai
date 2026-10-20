@@ -46,6 +46,7 @@ from app.models.personal_record import PersonalRecord
 from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession, week_index
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
+from app.services.athlete_profile import add_note, profile_as_dict, profile_prompt_block, update_profile
 from app.services.records import format_value, record_meta
 from app.services.weekly_report import build_weekly_facts, format_weekly_facts
 from app.models.user import User
@@ -489,6 +490,71 @@ TOOLS = [
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "get_athlete_profile",
+        "description": (
+            "Returns the athlete's long-term profile (sports, experience, which days they can "
+            "train, session length, equipment, pool length, FTP, limitations) and the notes you "
+            "saved earlier with `remember`. A compact copy is already in your instructions; call "
+            "this when you need the note ids or want to be sure you have the latest."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "update_athlete_profile",
+        "description": (
+            "Saves facts the athlete has TOLD you about themselves, so you never have to ask "
+            "again. Send only the fields that changed. Never store something you concluded or "
+            "guessed - only what they said. Values outside the allowed ones are rejected and "
+            "reported back to you."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sports": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["running", "cycling", "swimming", "strength", "walking",
+                                 "hiking", "hiit", "yoga", "mobility", "other"],
+                    },
+                },
+                "experience": {"type": "string", "enum": ["beginner", "intermediate", "advanced"]},
+                "training_days": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["sunday", "monday", "tuesday", "wednesday",
+                                 "thursday", "friday", "saturday"],
+                    },
+                    "description": "The days they CAN train, not the days a plan uses.",
+                },
+                "max_session_minutes": {"type": "integer"},
+                "equipment": {"type": "string", "description": "In their words, e.g. 'חדר כושר מלא', 'משקולות בבית'."},
+                "pool_length_m": {"type": "integer"},
+                "ftp_watts": {"type": "integer"},
+                "limitations": {
+                    "type": "string",
+                    "description": "Injuries or limits exactly as they described them. Never a diagnosis.",
+                },
+            },
+        },
+    },
+    {
+        "name": "remember",
+        "description": (
+            "Saves one short fact the athlete told you that matters for future coaching and "
+            "does not fit the profile fields - a preference, a constraint, an event. Example: "
+            "'מעדיף לרוץ בבוקר לפני העבודה'. One fact per call, in Hebrew, under 300 characters. "
+            "Never save your own conclusions or anything they did not say. The athlete can see "
+            "and delete every note."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"note": {"type": "string"}},
+            "required": ["note"],
+        },
+    },
 ]
 
 
@@ -499,6 +565,17 @@ def _metric_to_dict(metric: DailyMetric) -> dict:
         "sleep_minutes": metric.sleep_duration_minutes,
         "deep_sleep_minutes": metric.deep_sleep_minutes,
         "rem_sleep_minutes": metric.rem_sleep_minutes,
+        "sleep_score": metric.sleep_score,
+        "sleep_score_qualifier": metric.sleep_score_qualifier,
+        # Absent unless Pulse Ox during sleep is on in the watch.
+        "avg_spo2": metric.avg_spo2,
+        "lowest_spo2": metric.lowest_spo2,
+        "sleep_respiration_avg": metric.avg_sleep_respiration,
+        "sleep_respiration_lowest": metric.lowest_sleep_respiration,
+        "restless_moments": metric.restless_moments,
+        "body_battery_charged_overnight": metric.sleep_body_battery_change,
+        "bedtime": metric.sleep_start_local.strftime("%H:%M") if metric.sleep_start_local else None,
+        "wake_time": metric.sleep_end_local.strftime("%H:%M") if metric.sleep_end_local else None,
         "resting_heart_rate": metric.resting_heart_rate,
         "max_heart_rate": metric.max_heart_rate,
         "hrv": metric.avg_hrv,
@@ -887,6 +964,20 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
             session.commit()
         return json.dumps({"deleted": existing is not None}, ensure_ascii=False)
 
+    if name == "get_athlete_profile":
+        return json.dumps(profile_as_dict(session, user.id), ensure_ascii=False)
+
+    if name == "update_athlete_profile":
+        saved, rejected = update_profile(session, user.id, tool_input or {})
+        return json.dumps({"saved": saved, "rejected": rejected}, ensure_ascii=False)
+
+    if name == "remember":
+        ok, reason = add_note(session, user.id, tool_input.get("note", ""))
+        result = {"saved": ok, "reason": reason}
+        if reason == "full":
+            result["hint"] = "The note list is full. Tell the athlete they can remove old ones from /profile."
+        return json.dumps(result, ensure_ascii=False)
+
     return json.dumps({"error": f"unknown tool {name}"})
 
 
@@ -941,6 +1032,23 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
     dated_message = f"[היום: {clock.today().isoformat()}]\n{user_message}"
     messages: list[dict] = history + [{"role": "user", "content": dated_message}]
 
+    system = [
+        {
+            "type": "text",
+            "text": COACH_SYSTEM_PROMPT,
+            # The system prompt + tool definitions are identical on every
+            # request, so caching them turns the largest fixed part of the
+            # input into a ~90% cheaper cache read.
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    # The athlete's profile goes in a second block, *after* the cache point.
+    # It differs per user and changes over time; inside the cached block it
+    # would make every user's prefix unique and every edit a cache miss.
+    profile_block = profile_prompt_block(session, user.id)
+    if profile_block:
+        system.append({"type": "text", "text": profile_block})
+
     response = None
     for _ in range(MAX_TOOL_ROUNDS):
         response = _call_claude(
@@ -950,16 +1058,7 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
             kind="chat",
             model=settings.claude_model,
             max_tokens=2000,
-            system=[
-                {
-                    "type": "text",
-                    "text": COACH_SYSTEM_PROMPT,
-                    # The system prompt + tool definitions are identical on
-                    # every request, so caching them turns the largest fixed
-                    # part of the input into a ~90% cheaper cache read.
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            system=system,
             tools=TOOLS,
             messages=messages,
             output_config={"effort": "medium"},
@@ -1038,6 +1137,7 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     payload = {
         "today": today,
         "goal": user.training_goal,
+        "athlete": profile_as_dict(session, user.id),
         "daily_metrics_last_7_days": metrics,
         "recent_activities": activities,
         # The whole plan, so adherence can be judged against what was

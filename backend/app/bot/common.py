@@ -93,6 +93,7 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🔔 שינוי שעת הסיכום היומי", callback_data="settings:summary_hour")],
             [InlineKeyboardButton("📅 סיכום שבועי", callback_data="weekly:menu")],
             [InlineKeyboardButton("📣 הודעות מהמאמן", callback_data="notify:menu")],
+            [InlineKeyboardButton("👤 מה המאמן יודע עליי", callback_data="profile:show")],
             [InlineKeyboardButton("🔌 ניתוק זמני (הנתונים נשמרים)", callback_data="settings:unlink")],
             [InlineKeyboardButton("🗑 מחיקת המשתמש והנתונים", callback_data="settings:delete")],
         ]
