@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     # those messages (never the chat) and tells the owner once.
     ai_monthly_budget_usd: float = 30.0
 
+    # The 30-minute "has the watch uploaded?" check behind the post-workout
+    # message. Off means that message waits for the next scheduled sync.
+    watch_poll_enabled: bool = True
+
     # --- Concurrency ------------------------------------------------------
     # How many coach conversations may run at the same time. Each one holds
     # a thread and a database connection for as long as Claude takes to

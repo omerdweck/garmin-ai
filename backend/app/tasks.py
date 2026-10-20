@@ -22,7 +22,13 @@ from app.core.claude_client import (
     generate_weekly_summary,
 )
 from app.core.config import settings
-from app.core.garmin_client import GarminAuthError, GarminRateLimitError
+from app.core.crypto import decrypt
+from app.core.garmin_client import (
+    GarminAuthError,
+    GarminRateLimitError,
+    get_watch_last_upload,
+    resume_garmin_session,
+)
 from app.core.telegram_client import send_telegram_message
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
@@ -36,6 +42,13 @@ from app.services.calorie_tracking import (
 from app.services.garmin_sync import sync_user_garmin_data
 from app.services.ai_budget import budget_exhausted
 from app.services.coach_events import deliver as deliver_coach_event
+from app.services.garmin_throttle import is_throttled as garmin_is_throttled
+from app.services.garmin_throttle import mark_throttled as mark_garmin_throttled
+from app.services.post_workout import (
+    fresh_activities_since,
+    latest_garmin_activity_id,
+    record_post_workout_events,
+)
 from app.services.records import format_broken_records
 from app.services.sync_lock import release as release_sync_lock
 from app.services.sync_lock import user_sync_lock
@@ -145,10 +158,13 @@ def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
             select(GarminAccount).where(GarminAccount.user_id == user_id)
         ).first()
         upload_before = account_before.watch_last_upload_at if account_before else None
+        # Everything with a higher id after the sync is a workout it brought in.
+        last_activity_before = latest_garmin_activity_id(session, user_id)
 
         try:
             broken_records = sync_user_garmin_data(session=session, user_id=user_id)
         except GarminRateLimitError as exc:
+            mark_garmin_throttled()
             user = session.get(User, user_id)
             if notify_on_success and user is not None and user.telegram_chat_id is not None:
                 send_telegram_message(
@@ -181,6 +197,14 @@ def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
         # on the one run that first sees the better number, so it cannot
         # become the twice-daily noise the silent-scheduled-run rule exists
         # to prevent.
+        # A fresh workout gets its own message - and new records go inside
+        # it rather than as a second message right next to it.
+        new_workouts = fresh_activities_since(session, user_id, last_activity_before)
+        if new_workouts and user.notify_post_workout:
+            for event in record_post_workout_events(session, user, new_workouts, broken_records):
+                deliver_coach_event_task.delay(event.id)
+            broken_records = []
+
         if broken_records:
             send_telegram_message(user.telegram_chat_id, format_broken_records(broken_records))
 
@@ -521,3 +545,65 @@ def deliver_coach_event_task(self, event_id: int) -> None:
             logger.exception("Coach event %s failed", event_id)
             raise self.retry(exc=exc)
     logger.info("Coach event %s: %s", event_id, outcome)
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def poll_watch_uploads() -> None:
+    """
+    Every 30 minutes through the day: has anyone's watch uploaded something?
+
+    Without this the post-workout message waited for the next scheduled
+    sync - a 09:00 run answered at 20:00. Only users who want that message
+    are checked, and each check is one small request; a full sync follows
+    only when there really is something new.
+    """
+    if not settings.watch_poll_enabled or garmin_is_throttled():
+        return
+
+    with Session(engine) as session:
+        user_ids = session.exec(
+            select(User.id)
+            .join(GarminAccount, GarminAccount.user_id == User.id)
+            .where(
+                GarminAccount.disconnected_at.is_(None),
+                User.telegram_chat_id.is_not(None),
+                User.notify_post_workout.is_(True),
+            )
+        ).all()
+
+    # Spread out, for the same single-IP reason as the scheduled sync.
+    for index, user_id in enumerate(user_ids):
+        check_watch_upload_task.apply_async(args=[user_id], countdown=index * 3)
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def check_watch_upload_task(user_id: int) -> None:
+    """
+    One user's cheap check. It does not store the new upload time itself:
+    the sync it triggers does, and the sync relies on seeing the old value
+    first to tell "new data" from "nothing new".
+    """
+    if garmin_is_throttled():
+        return
+
+    with Session(engine) as session:
+        account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user_id)).first()
+        if account is None or account.disconnected_at is not None:
+            return
+        stored = account.watch_last_upload_at
+        token = account.encrypted_token
+
+    try:
+        latest = get_watch_last_upload(resume_garmin_session(decrypt(token)))
+    except GarminRateLimitError:
+        mark_garmin_throttled()
+        return
+    except GarminAuthError:
+        return  # the next scheduled sync handles a dead token and tells the user
+
+    if latest is None:
+        return
+    if stored is not None and stored.tzinfo is None:
+        stored = stored.replace(tzinfo=timezone.utc)
+    if stored is None or latest > stored:
+        sync_one_user_task.delay(user_id)

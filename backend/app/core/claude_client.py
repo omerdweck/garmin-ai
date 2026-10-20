@@ -34,6 +34,7 @@ from app.services.calorie_tracking import (
 )
 from app.core.claude_prompts import (
     COACH_SYSTEM_PROMPT,
+    POST_WORKOUT_SYSTEM_PROMPT,
     DAILY_SUMMARY_SYSTEM_PROMPT,
     WEEKLY_SUMMARY_SYSTEM_PROMPT,
 )
@@ -1244,3 +1245,38 @@ def generate_weekly_summary(session: Session, user: User) -> Optional[str]:
 
     paragraph = "".join(b.text for b in response.content if b.type == "text").strip()
     return f"{table}\n\n{paragraph}" if paragraph else table
+
+
+def generate_post_workout_note(session: Session, user: User, facts: dict) -> Optional[str]:
+    """
+    The short coaching paragraph under a finished workout. The numbers are
+    shown above it by Python (format_activity_detail), so the model only
+    adds what they do not say on their own - and is told not to repeat them.
+
+    Low effort and a small ceiling: one message per workout per user is the
+    most frequent AI call the coach makes on its own initiative.
+    """
+    client = _client()
+    response = _call_claude(
+        client,
+        session=session,
+        user_id=user.id,
+        kind="post_workout",
+        model=settings.claude_model,
+        max_tokens=400,
+        system=[
+            {
+                "type": "text",
+                "text": POST_WORKOUT_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": "הנה נתוני האימון. כתוב את ההודעה.\n\n" + json.dumps(facts, ensure_ascii=False),
+            }
+        ],
+        output_config={"effort": "low"},
+    )
+    return "".join(b.text for b in response.content if b.type == "text").strip() or None
