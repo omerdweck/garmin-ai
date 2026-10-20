@@ -50,3 +50,13 @@ def send_telegram_message(chat_id: int, text: str, markdown: bool = True, reply_
     `reply_markup` is an InlineKeyboardMarkup, for messages that carry buttons.
     """
     asyncio.run(_send(chat_id, text, markdown, reply_markup))
+
+
+async def _send_document(chat_id: int, content: bytes, filename: str, caption: str) -> None:
+    bot = Bot(token=settings.telegram_bot_token)
+    await bot.send_document(chat_id=chat_id, document=content, filename=filename, caption=caption)
+
+
+def send_telegram_document(chat_id: int, content: bytes, filename: str, caption: str = "") -> None:
+    """A file as a Telegram attachment - used for workout files (.fit, .zwo, .erg, .mrc)."""
+    asyncio.run(_send_document(chat_id, content, filename, caption))

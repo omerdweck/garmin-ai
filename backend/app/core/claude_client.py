@@ -49,6 +49,9 @@ from app.models.plan_session import DAY_KEYS, DAY_NAMES_HE, PlanSession, week_in
 from app.models.training_plan import TrainingPlan
 from app.models.usage_event import UsageEvent
 from app.services.anomalies import health_overview
+from app.services.workout_schema import parse_workout, search_exercises, tool_input_schema
+from app.services.workout_view import describe as describe_workout
+from app.services.workouts import can_send_to_watch, save_workout, user_ftp
 from app.services.athlete_profile import add_note, profile_as_dict, profile_prompt_block, update_profile
 from app.services.records import format_value, record_meta
 from app.services.weekly_report import build_weekly_facts, format_weekly_facts
@@ -513,6 +516,36 @@ TOOLS = [
             "recovery, or before suggesting harder training. Never present an alert as a diagnosis."
         ),
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "build_workout",
+        "description": (
+            "Builds ONE structured workout the athlete can send to their Garmin watch or download "
+            "as a file. Use it whenever you prescribe a specific session (\"6x800 at 4:10\", "
+            "\"45 min easy ride\", a gym session) - not for general advice. Every sport is "
+            "supported: running, walking, hiking, cycling, swimming, strength, hiit, yoga, "
+            "mobility, cardio. Units: pace in seconds per km with low = the FASTER end; power in "
+            "watts, or power_ftp_pct in percent of FTP; time in seconds; distance in metres. "
+            "Swimming needs pool_length_m (take it from the profile). Strength uses 'exercise' "
+            "blocks whose names must match Garmin's catalog exactly - look them up with "
+            "search_exercises first. If the workout is invalid you get a list of errors back: fix "
+            "them and call again. On success the athlete sees a preview with buttons below your "
+            "reply, so do not repeat every step in your text - one or two sentences on the purpose."
+        ),
+        "input_schema": tool_input_schema(),
+    },
+    {
+        "name": "search_exercises",
+        "description": (
+            "Searches Garmin's strength-exercise catalog (English names, ~1,500 exercises). "
+            "Returns exact names to use in build_workout, e.g. 'squat barbell' -> "
+            "'Barbell Back Squat', ... Search in English."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "e.g. 'bench press', 'plank'"}},
+            "required": ["query"],
+        },
     },
     {
         "name": "update_athlete_profile",
@@ -980,6 +1013,36 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
 
     if name == "get_athlete_profile":
         return json.dumps(profile_as_dict(session, user.id), ensure_ascii=False)
+
+    if name == "build_workout":
+        workout, errors = parse_workout(tool_input or {})
+        if workout is None:
+            return json.dumps(
+                {"saved": False, "errors": errors[:15], "hint": "Fix these and call build_workout again."},
+                ensure_ascii=False,
+            )
+        warnings = []
+        uses_ftp = any(
+            getattr(getattr(step, "target", None), "type", None) == "power_ftp_pct"
+            for item in workout.steps
+            for step in (getattr(item, "steps", None) or [item])
+        )
+        if uses_ftp and not user_ftp(session, user.id):
+            warnings.append("No FTP in the profile: the watch needs watts. Ask for their FTP, or use 'power' in watts.")
+        row = save_workout(session, user.id, workout)
+        return json.dumps(
+            {
+                "saved": True,
+                "workout_id": row.id,
+                "preview": describe_workout(workout),
+                "can_send_to_watch": can_send_to_watch(user, workout.sport),
+                "warnings": warnings,
+            },
+            ensure_ascii=False,
+        )
+
+    if name == "search_exercises":
+        return json.dumps({"exercises": search_exercises(str((tool_input or {}).get("query", "")))}, ensure_ascii=False)
 
     if name == "get_health_alerts":
         return json.dumps(health_overview(session, user.id), ensure_ascii=False)

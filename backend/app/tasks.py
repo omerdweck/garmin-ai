@@ -7,6 +7,7 @@ something Celery can schedule/queue/retry".
 """
 
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_
@@ -26,10 +27,11 @@ from app.core.crypto import decrypt
 from app.core.garmin_client import (
     GarminAuthError,
     GarminRateLimitError,
+    GarminRequestError,
     get_watch_last_upload,
     resume_garmin_session,
 )
-from app.core.telegram_client import send_telegram_message
+from app.core.telegram_client import send_telegram_document, send_telegram_message
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
 from app.models.plan_session import week_index
@@ -52,6 +54,7 @@ from app.services.post_workout import (
     record_post_workout_events,
 )
 from app.services.records import format_broken_records
+from app.services import workouts as workout_service
 from app.services.sync_lock import release as release_sync_lock
 from app.services.sync_lock import user_sync_lock
 from app.services.metrics_view import (
@@ -622,3 +625,75 @@ def check_watch_upload_task(user_id: int) -> None:
         stored = stored.replace(tzinfo=timezone.utc)
     if stored is None or latest > stored:
         sync_one_user_task.delay(user_id)
+
+
+# --------------------------------------------------------------------------
+# Workouts on the watch. On the default queue: each is two or three small
+# Garmin requests, like a sync, and nothing here calls Claude.
+# --------------------------------------------------------------------------
+
+WORKOUT_REMOVE_KEYBOARD_TEXT = "🗑 הסרה מהשעון"
+
+
+@contextmanager
+def _workout_errors(chat_id: int, action: str):
+    """Every way a Garmin workout action can fail, turned into one clear message."""
+    try:
+        yield
+    except GarminRateLimitError:
+        mark_garmin_throttled()
+        send_telegram_message(chat_id, "⏳ גרמין מגבילים כרגע את הבקשות. נסה שוב בעוד כמה דקות.")
+    except GarminAuthError:
+        send_telegram_message(chat_id, "🔌 החיבור לגרמין פג תוקף. שלח /start כדי להתחבר מחדש.")
+    except GarminRequestError as exc:
+        # What was sent is in workout.sent_json; this line says why it failed.
+        logger.error("Garmin rejected workout %s: %s", action, exc)
+        send_telegram_message(
+            chat_id, "⚠️ Garmin לא קיבלו את האימון. רשמתי את זה. אפשר לבקש מהמאמן גרסה פשוטה יותר."
+        )
+    except (workout_service.WorkoutNotFound, PermissionError):
+        send_telegram_message(chat_id, "האימון הזה לא זמין לשליחה.")
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def send_workout_task(user_id: int, workout_id: int, day_iso: str) -> None:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None or user.telegram_chat_id is None:
+            return
+        with _workout_errors(user.telegram_chat_id, f"send {workout_id}"):
+            row = workout_service.send_to_watch(
+                session, user, workout_id, datetime.strptime(day_iso, "%Y-%m-%d").date()
+            )
+            send_telegram_message(
+                user.telegram_chat_id,
+                f"✅ *{row.name}* נכנס ללוח של Garmin ל-{row.scheduled_for.strftime('%d.%m')}.\n"
+                "הוא יופיע בשעון אחרי הסנכרון הבא שלו.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(WORKOUT_REMOVE_KEYBOARD_TEXT, callback_data=f"wk:drop:{row.id}")
+                ]]),
+            )
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def workout_fit_task(user_id: int, workout_id: int) -> None:
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None or user.telegram_chat_id is None:
+            return
+        with _workout_errors(user.telegram_chat_id, f"fit {workout_id}"):
+            name, content = workout_service.fit_file(session, user, workout_id)
+            send_telegram_document(user.telegram_chat_id, content, name, caption="📄 קובץ .fit")
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def remove_workout_task(user_id: int, workout_id: int) -> None:
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None or user.telegram_chat_id is None:
+            return
+        with _workout_errors(user.telegram_chat_id, f"remove {workout_id}"):
+            workout_service.remove_from_watch(session, user, workout_id)
+            send_telegram_message(user.telegram_chat_id, "🗑 הוסר מהלוח של Garmin.")
