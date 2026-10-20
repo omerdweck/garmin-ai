@@ -136,6 +136,37 @@ class Settings(BaseSettings):
     # message. Off means that message waits for the next scheduled sync.
     watch_poll_enabled: bool = True
 
+    # --- Anomaly alerts ---------------------------------------------------
+    # Each rule compares the last few days with the athlete's own previous
+    # four weeks. The numbers are here, not in the rules, so tuning one does
+    # not mean touching logic - and the tests read them from here too.
+    #
+    # Days of data a baseline needs before any rule may lean on it. Two
+    # weeks: fewer and one bad night moves the "normal" itself.
+    anomaly_min_baseline_days: int = 14
+    # HRV: three falls in a row, ending this far below the usual (in
+    # standard deviations). Half a deviation: the run of falls already
+    # filters out most noise.
+    anomaly_hrv_std_factor: float = 0.5
+    # Resting HR: beats above the usual, on two of the last three days.
+    anomaly_rhr_delta: int = 5
+    # Sleep: a night shorter than this, or scored lower, counts as poor.
+    anomaly_sleep_min_minutes: int = 360
+    anomaly_sleep_min_score: int = 60
+    # Body Battery: three days in a row without recharging above this.
+    anomaly_body_battery_recovery: int = 50
+    # Easy runs: metres per heartbeat this many percent below the usual on
+    # two of the last three.
+    anomaly_easy_run_drop_pct: float = 4.0
+    # Load: Garmin's acute:chronic ratio above this, or a week this many
+    # percent above the four before it.
+    anomaly_acwr_max: float = 1.5
+    anomaly_volume_jump_pct: float = 30.0
+    # Below these there is too little training for a ratio to mean anything:
+    # 20 minutes after a week of 10 is "+100%" and nothing to warn about.
+    anomaly_min_weekly_minutes: int = 90
+    anomaly_min_chronic_load: int = 50
+
     # --- Concurrency ------------------------------------------------------
     # How many coach conversations may run at the same time. Each one holds
     # a thread and a database connection for as long as Claude takes to

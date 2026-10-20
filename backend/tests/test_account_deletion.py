@@ -9,6 +9,7 @@ from datetime import date
 from sqlalchemy import func, select
 
 from app.models.achievement import Achievement
+from app.models.metric_alert import MetricAlert, MetricBaseline
 from app.models.athlete_profile import AthleteProfile, CoachNote
 from app.models.calorie_entry import CalorieBurnOverride, CalorieEntry
 from app.models.chat_message import ChatMessage
@@ -34,6 +35,11 @@ def _fill_every_table(session, make_activity, user):
     session.add(AthleteProfile(user_id=user.id, limitations="ברך"))
     session.add(CoachNote(user_id=user.id, text="מעדיף בוקר"))
     session.add(Achievement(user_id=user.id, key="first:running"))
+    session.add(MetricAlert(user_id=user.id, rule="rhr_high", started_on=date.today(), last_seen_on=date.today()))
+    session.add(MetricBaseline(
+        user_id=user.id, metric="avg_hrv", mean=50, std=4, samples=28,
+        window_start=date.today(), window_end=date.today(),
+    ))
     session.add(UsageEvent(user_id=user.id, kind="chat", model="m"))
     session.add(CalorieEntry(user_id=user.id, entry_date=date.today(), calories=500))
     session.add(CalorieBurnOverride(user_id=user.id, date=date.today(), calories=2400))

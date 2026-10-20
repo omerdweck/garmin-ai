@@ -41,6 +41,8 @@ from app.services.calorie_tracking import (
 )
 from app.services.garmin_sync import sync_user_garmin_data
 from app.services.ai_budget import budget_exhausted
+from app.services import anomalies
+from app.services import anomaly_message  # noqa: F401 - registers the alert composer
 from app.services.coach_events import deliver as deliver_coach_event
 from app.services.garmin_throttle import is_throttled as garmin_is_throttled
 from app.services.garmin_throttle import mark_throttled as mark_garmin_throttled
@@ -207,6 +209,19 @@ def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
 
         if broken_records:
             send_telegram_message(user.telegram_chat_id, format_broken_records(broken_records))
+
+        # Anomalies are checked on every sync - it is a few queries over data
+        # already stored - and announced through the same pipeline, which
+        # applies the user's switch and the one-per-day limit. A failure here
+        # must never fail the sync that already succeeded.
+        try:
+            alert_event = anomalies.check_user(session, user_id)
+        except Exception:
+            session.rollback()
+            logger.exception("Anomaly check failed for user %s", user_id)
+            alert_event = None
+        if alert_event is not None:
+            deliver_coach_event_task.delay(alert_event.id)
 
         if not notify_on_success:
             # Scheduled run: normally silent. The one thing worth an
