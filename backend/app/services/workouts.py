@@ -11,7 +11,7 @@ import logging
 from datetime import date
 from typing import Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core import clock
 from app.core.config import settings
@@ -27,7 +27,7 @@ from app.core.garmin_client import (
 from app.models.athlete_profile import AthleteProfile
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
-from app.models.workout import STATUS_DRAFT, STATUS_REMOVED, STATUS_SENT, StoredWorkout
+from app.models.workout import STATUS_DRAFT, STATUS_PLANNED, STATUS_REMOVED, STATUS_SENT, StoredWorkout
 from app.services.workout_garmin import to_garmin
 from app.services.workout_schema import Workout, parse_workout
 
@@ -109,6 +109,7 @@ def send_to_watch(session: Session, user: User, workout_id: int, day: date) -> S
     elif row.garmin_schedule_id is not None:
         return row  # already on that day - pressing twice changes nothing
 
+    row.spec = {**row.spec, "date": day.isoformat()}
     row.garmin_schedule_id = schedule_workout(garmin, row.garmin_workout_id, day.isoformat())
     row.scheduled_for = day
     row.status = STATUS_SENT
@@ -151,9 +152,27 @@ def remove_from_watch(session: Session, user: User, workout_id: int) -> None:
     session.commit()
 
 
+def plan_workout(session: Session, user_id: int, workout_id: int, day: date) -> StoredWorkout:
+    """
+    Saves it in the bot for `day` - the athlete's week, the morning reminder -
+    without touching Garmin. A workout already on the watch is moved through
+    send_to_watch instead, so the bot and the watch never disagree on the day.
+    """
+    row, _ = load_workout(session, user_id, workout_id)
+    if row.status == STATUS_SENT:
+        raise ValueError("already on the watch - move it with send_to_watch")
+    row.scheduled_for = day
+    row.status = STATUS_PLANNED
+    row.spec = {**row.spec, "date": day.isoformat()}
+    session.add(row)
+    session.commit()
+    return row
+
+
 def discard_draft(session: Session, user_id: int, workout_id: int) -> bool:
+    """Removes a workout that is not on the watch (a draft, or one saved for a day)."""
     row = session.get(StoredWorkout, workout_id)
-    if row is None or row.user_id != user_id or row.status != STATUS_DRAFT:
+    if row is None or row.user_id != user_id or row.status not in (STATUS_DRAFT, STATUS_PLANNED):
         return False
     row.status = STATUS_REMOVED
     session.add(row)
@@ -168,3 +187,18 @@ def _safe_name(name: str) -> str:
 
 def file_name(row: StoredWorkout, extension: str) -> str:
     return f"{_safe_name(row.name)}.{extension}"
+
+
+def scheduled_between(session: Session, user_id: int, first: date, last: date) -> list[StoredWorkout]:
+    """Workouts with a day in [first, last] - saved in the bot or on the watch."""
+    return session.exec(
+        select(StoredWorkout)
+        .where(
+            StoredWorkout.user_id == user_id,
+            col(StoredWorkout.status).in_((STATUS_PLANNED, STATUS_SENT)),
+            StoredWorkout.scheduled_for >= first,
+            StoredWorkout.scheduled_for <= last,
+        )
+        .order_by(col(StoredWorkout.scheduled_for), col(StoredWorkout.id))
+    ).all()
+

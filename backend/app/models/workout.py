@@ -16,8 +16,9 @@ from sqlalchemy import BigInteger, Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
-STATUS_DRAFT = "draft"
-STATUS_SENT = "sent"
+STATUS_DRAFT = "draft"      # built, no day chosen yet
+STATUS_PLANNED = "planned"  # saved in the bot for a day, not on the watch
+STATUS_SENT = "sent"        # on the Garmin calendar
 STATUS_REMOVED = "removed"
 
 

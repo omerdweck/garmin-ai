@@ -33,7 +33,7 @@ from app.services.usage_limits import QuotaExceeded, check_quota
 from app.bot.calories import CALORIE_KEY
 from app.bot.common import CHAT_KEYBOARD, CHAT_MODE_KEY, MAIN_KEYBOARD, _find_user, _reply, _require_active
 from app.bot.manual_activity import MANUAL_KEY
-from app.bot.workouts import show_new_workouts
+from app.bot.workouts import BUILDER_KEY, show_new_workouts, with_free_day
 from app.core import clock
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # sit in memory and swallow the next thing the user typed.
     context.user_data.pop(MANUAL_KEY, None)
     context.user_data.pop(CALORIE_KEY, None)
+    context.user_data.pop(BUILDER_KEY, None)
     await update.message.reply_text("👇 הנה התפריט", reply_markup=MAIN_KEYBOARD)
 
 
@@ -150,7 +151,7 @@ async def talk_to_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    await run_coach_turn(update, context, update.message.text)
+    await run_coach_turn(update, context, with_free_day(context, update.message.text))
 
 
 async def run_coach_turn(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
