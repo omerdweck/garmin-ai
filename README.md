@@ -87,7 +87,11 @@ session it builds it as a structured workout (running, walking, hiking,
 cycling, swimming, strength, HIIT, yoga, mobility, cardio), and the athlete
 gets a preview with buttons: 📲 to the watch (today, tomorrow, or the day it
 was planned for), 📄 a file, or 🗑. The "🏋️ בנה אימון" button builds one
-from three taps (sport, length, focus). Files: `.fit` (made by Garmin
+from a few taps: sport, by time (a preset, or typed: "1:15") or by distance
+(typed: "5.5" km, or metres for swimming), focus. Every workout gets a day: 📅 opens the next seven days, then
+💾 saves it in the bot or 📲 also puts it on the Garmin calendar. "📋 התוכנית
+שלי" shows the week ahead - the weekly plan and every saved workout - with ➕
+to build a workout straight into any day. Files: `.fit` (made by Garmin
 itself, so the watch reads it), and for cycling `.zwo` (Zwift), `.mrc`
 (%FTP) and `.erg` (watts).
 

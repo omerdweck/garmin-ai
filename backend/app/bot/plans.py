@@ -14,7 +14,12 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from datetime import timedelta
+
+from app.bot.workouts import encode_day
+from app.core import clock
 from app.db.session import engine
+from app.services.workouts import scheduled_between
 # Aliased: activity_view exports a type_label too, and a bare import of both
 # silently left whichever came last in force.
 from app.services.plan_view import (
@@ -23,18 +28,43 @@ from app.services.plan_view import (
     cancel_plan,
     discard_pending,
     discipline_label,
+    day_label,
     format_upcoming_week,
 )
 from app.bot.common import CHAT_KEYBOARD, CHAT_MODE_KEY, MAIN_KEYBOARD, _find_user, _reply, _reply_plain, _require_active
 
 
 
+def week_keyboard(saved, has_plan: bool) -> InlineKeyboardMarkup:
+    """
+    ➕ for every day of the coming week (opens the workout builder already
+    set for that day), a button per saved workout, and the plan actions.
+    """
+    today = clock.today()
+    days = [today + timedelta(days=offset) for offset in range(7)]
+    add = [
+        InlineKeyboardButton(f"➕ {day_label(day, today)}", callback_data=f"wkb:day:{encode_day(day)}")
+        for day in days
+    ]
+    rows = [add[:4], add[4:]]
+    for workout in saved[:8]:
+        rows.append([InlineKeyboardButton(
+            f"🔍 {workout.name} · {day_label(workout.scheduled_for, today)}", callback_data=f"wk:open:{workout.id}"
+        )])
+    rows.append([InlineKeyboardButton("✨ בניית תוכנית חדשה", callback_data="plan:new")])
+    if has_plan:
+        rows.append([InlineKeyboardButton("🗑 מחיקת תוכנית", callback_data="plan:delete")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def show_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    The plan hub: what the week holds, and the two things you can do about
-    it. The delete action lives here rather than on the main keyboard - a
-    destructive button sitting next to ones people press daily is a mis-tap
-    waiting to happen, and it belongs with the thing it destroys.
+    The week and the plan in one place: the next seven days (the weekly
+    plan plus every workout saved for a date), ➕ to add a workout to any
+    of them, and the plan actions. The delete action lives here rather than
+    on the main keyboard - a destructive button sitting next to ones people
+    press daily is a mis-tap waiting to happen, and it belongs with the
+    thing it destroys.
     """
     user_id = await _require_active(update)
     if user_id is None:
@@ -42,25 +72,17 @@ async def show_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     with Session(engine) as session:
         text = format_upcoming_week(session, user_id)
-        has_plan = bool(text)
+        has_plan = bool(active_plans(session, user_id))
+        today = clock.today()
+        saved = scheduled_between(session, user_id, today, today + timedelta(days=6))
+        keyboard = week_keyboard(saved, has_plan)
 
-    rows = [[InlineKeyboardButton("✨ בניית תוכנית חדשה", callback_data="plan:new")]]
-    if has_plan:
-        rows.append([InlineKeyboardButton("🗑 מחיקת תוכנית", callback_data="plan:delete")])
-
-    if not has_plan:
-        await update.message.reply_text(
-            "📋 *אין לך תוכנית אימונים כרגע*\n\n"
-            "אפשר לבנות אחת בשיחה עם המאמן 👇",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(rows),
+    if not text:
+        text = (
+            "📅 *השבוע שלך ריק*\n\n"
+            "אפשר להוסיף אימון לכל יום עם ➕, או לבנות תוכנית שבועית שלמה עם המאמן 👇"
         )
-        return
-
-    await _reply(update, text)
-    await update.effective_chat.send_message(
-        "מה עכשיו?", reply_markup=InlineKeyboardMarkup(rows)
-    )
+    await _reply(update, text, reply_markup=keyboard)
 
 
 async def on_plan_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

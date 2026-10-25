@@ -12,7 +12,7 @@ import pytest
 from sqlmodel import select
 
 import app.tasks as tasks
-from app.bot.workouts import BUILDER_SPORTS, DURATIONS, FOCUS, builder_request, workout_keyboard
+from app.bot.workouts import workout_keyboard
 from app.core import clock
 from app.core.claude_client import TOOLS, _execute_tool
 from app.core.config import settings
@@ -262,24 +262,14 @@ def _buttons(keyboard):
     return [b.callback_data for row in keyboard.inline_keyboard for b in row]
 
 
-def test_owner_sees_watch_and_fit_buttons_others_do_not(session, make_user, owner):
+def test_owner_sees_the_fit_button_others_only_trainer_files(session, make_user, owner):
     someone = make_user()
     workout, _ = parse_workout(EXAMPLES["cycling"])
     row = service.save_workout(session, owner.id, workout)
 
     mine = _buttons(workout_keyboard(row, workout, owner, ftp=250))
-    assert any(b.startswith(f"wk:send:{row.id}:") for b in mine)
     assert {f"wk:file:{row.id}:{f}" for f in ("fit", "zwo", "erg", "mrc")} <= set(mine)
 
     theirs = _buttons(workout_keyboard(row, workout, someone, ftp=None))
-    assert not any(b.startswith("wk:send") or b.endswith(":fit") for b in theirs)
+    assert not any(b.endswith(":fit") for b in theirs)
     assert f"wk:file:{row.id}:zwo" in theirs  # trainer files need no Garmin
-
-
-def test_every_builder_option_fits_in_a_callback():
-    assert set(BUILDER_SPORTS) == set(FOCUS)
-    for sport in BUILDER_SPORTS:
-        for focus in FOCUS[sport]:
-            assert len(f"wkb:f:{sport}:{max(DURATIONS)}:{focus}".encode()) <= 64
-            assert "build_workout" in builder_request(sport, 45, focus)
-    assert len("wk:send:99999999:2026-12-31".encode()) <= 64

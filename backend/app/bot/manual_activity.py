@@ -34,6 +34,7 @@ from app.services.manual_activity import (
 from app.services.manual_activity import type_label as manual_type_label
 from app.bot.calories import CALORIE_KEY, _handle_calorie_text
 from app.bot.common import MAIN_KEYBOARD, MENU_BUTTONS, _find_user, _require_active
+from app.bot.workouts import BUILDER_KEY, handle_builder_text
 
 logger = logging.getLogger(__name__)
 
@@ -269,10 +270,11 @@ async def on_manual_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """
     draft = context.user_data.get(MANUAL_KEY)
     calorie_draft = context.user_data.get(CALORIE_KEY)
+    builder = context.user_data.get(BUILDER_KEY)
 
     if not (draft and draft.get("awaiting")) and not (
         calorie_draft and calorie_draft.get("awaiting")
-    ):
+    ) and not builder:
         return
 
     text = update.message.text
@@ -283,8 +285,14 @@ async def on_manual_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if text in MENU_BUTTONS:
         context.user_data.pop(MANUAL_KEY, None)
         context.user_data.pop(CALORIE_KEY, None)
+        context.user_data.pop(BUILDER_KEY, None)
         logger.info("Pending entry abandoned via menu button by chat %s", update.effective_chat.id)
         return
+
+    if builder:
+        # A typed time or distance for the workout builder.
+        await handle_builder_text(update, context, text)
+        raise ApplicationHandlerStop
 
     if calorie_draft and calorie_draft.get("awaiting"):
         await _handle_calorie_text(update, context, calorie_draft, text)

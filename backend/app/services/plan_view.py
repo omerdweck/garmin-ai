@@ -135,9 +135,23 @@ def format_plan(session: Session, plan: TrainingPlan) -> str:
     return "\n".join(lines).rstrip()
 
 
+SHORT_DAY_NAMES = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"]
+
+
+def day_label(day, today=None) -> str:
+    """'היום', 'מחר', or "ה' 23.10" - how a day reads on a button."""
+    today = today or clock.today()
+    if day == today:
+        return "היום"
+    if day == today + timedelta(days=1):
+        return "מחר"
+    return f"{SHORT_DAY_NAMES[week_index(day)]} {day.strftime('%d.%m')}"
+
+
 def format_upcoming_week(session: Session, user_id: int) -> str:
     """
-    The next seven days, dated, with every discipline merged into each day.
+    The next seven days, dated: what the weekly plan says for each, and the
+    workouts saved for that date (in the bot or on the watch).
 
     Seven days forward from today rather than a fixed Sunday-to-Saturday
     week: opening this on a Wednesday should not show four days that have
@@ -145,28 +159,37 @@ def format_upcoming_week(session: Session, user_id: int) -> str:
 
     Merged by day rather than listed per plan because "what do I have on
     Tuesday" is a question that crosses disciplines - someone running and
-    swimming wants one answer, not two lists to reconcile.
+    swimming wants one answer, not two lists to reconcile. Returns "" when
+    the week holds nothing at all.
     """
-    plans = active_plans(session, user_id)
-    if not plans:
-        return ""
+    # Imported here: the workout service reaches Garmin, and reading a plan
+    # should not load that unless it is actually used.
+    from app.services.workout_view import SPORT_LABELS
+    from app.services.workouts import scheduled_between
+    from app.models.workout import STATUS_SENT
 
+    plans = active_plans(session, user_id)
     by_plan = {p.id: p.discipline for p in plans}
     sessions = session.exec(
         select(PlanSession).where(PlanSession.plan_id.in_(list(by_plan)))
-    ).all()
+    ).all() if plans else []
 
     by_day: dict[int, list] = {}
     for item in sessions:
         by_day.setdefault(item.day_of_week, []).append(item)
 
     today = clock.today()
-    lines = [_rtl("📋 *התוכנית שלך - השבוע הקרוב*"), ""]
+    saved = scheduled_between(session, user_id, today, today + timedelta(days=6))
+    if not sessions and not saved:
+        return ""
+
+    lines = [_rtl("📅 *השבוע שלך*"), ""]
 
     for offset in range(7):
         day = today + timedelta(days=offset)
         index = week_index(day)
         items = by_day.get(index, [])
+        workouts = [w for w in saved if w.scheduled_for == day]
 
         marker = " _(היום)_" if offset == 0 else (" _(מחר)_" if offset == 1 else "")
         # The date always gets its own line, even for a single session. With
@@ -175,7 +198,7 @@ def format_upcoming_week(session: Session, user_id: int) -> str:
         # thing rather than two equal items on the same day.
         lines.append(_rtl(f"*{DAY_NAMES_HE[index]} {day.strftime('%d/%m')}*{marker}"))
 
-        if not items:
+        if not items and not workouts:
             # No row at all is not the same as a prescribed rest day, and
             # saying so is more honest than implying the coach chose it.
             lines.append(_rtl("   אין אימון מתוכנן"))
@@ -202,6 +225,11 @@ def format_upcoming_week(session: Session, user_id: int) -> str:
             lines.append(_rtl(f"   {label} *{item.title}*{suffix}"))
             if item.details:
                 lines.append(_rtl(f"      {item.details}"))
+
+        for workout in workouts:
+            emoji = SPORT_LABELS.get(workout.sport, ("🏅", ""))[0]
+            where = "📲 בשעון" if workout.status == STATUS_SENT else "💾 בבוט"
+            lines.append(_rtl(f"   {emoji} *{workout.name}* · {where}"))
 
         lines.append("")
 
