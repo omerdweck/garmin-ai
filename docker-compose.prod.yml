@@ -104,7 +104,10 @@ services:
   # port 80 must be open too (that's where Let's Encrypt checks the domain).
   caddy:
     restart: unless-stopped
-    image: caddy:2
+    # Caddy with the built React app inside (frontend/Dockerfile): the
+    # deploy's `docker compose build` compiles the Mini App, so the server
+    # needs no Node and no build step of its own.
+    build: ./frontend
     ports:
       - "80:80"
       - "443:443"
@@ -113,8 +116,6 @@ services:
       MINIAPP_DOMAIN: ${MINIAPP_DOMAIN:-garmin-ai.duckdns.org}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      # Static files rather than code: the built page, served as-is.
-      - ./miniapp:/srv/miniapp:ro
       # Certificates live here. Losing this volume means asking Let's
       # Encrypt again on every restart, and its weekly limits are real.
       - caddy_data:/data
