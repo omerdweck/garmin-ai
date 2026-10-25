@@ -31,14 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Quick lookups - each one is a single DB read, no Claude involved.
 BTN_ACTIVITIES = "🏃 האימונים שלי"
-BTN_WEEK = "📅 השבוע שלי"
+BTN_WEEK = "📈 סיכום שבועי"
 BTN_RACES = "🏁 תחזיות זמנים"
 BTN_METRICS = "📊 המדדים שלי"
 BTN_SYNC = "🔄 סנכרון"
 BTN_ADD_ACTIVITY = "➕ הוספת אימון"
 BTN_CALORIES = "🍽 קלוריות"
 BTN_RECORDS = "🏆 השיאים שלי"
-BTN_PLAN = "📋 התוכנית שלי"
+BTN_PLAN = "🗓 לו״ז אימונים שבועי"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
 BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
@@ -63,6 +63,13 @@ MENU_BUTTONS = {
     BTN_METRICS, BTN_ACTIVITIES, BTN_WEEK, BTN_RACES, BTN_PLAN, BTN_CALORIES,
     BTN_RECORDS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT, BTN_BUILD_WORKOUT,
 }
+
+# Labels the buttons had before they were renamed. Telegram keeps showing a
+# chat's old keyboard until the bot sends a new one, so for a while people
+# will still tap these - they must keep working, not fall through to the coach.
+LEGACY_BTN_WEEK = "📅 השבוע שלי"
+LEGACY_BTN_PLAN = "📋 התוכנית שלי"
+MENU_BUTTONS |= {LEGACY_BTN_WEEK, LEGACY_BTN_PLAN}
 
 # Shown only while in chat mode, so the way out is always one visible tap -
 # a mode with no obvious exit is a mode users get stuck in.

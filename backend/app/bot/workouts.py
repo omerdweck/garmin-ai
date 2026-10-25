@@ -38,6 +38,7 @@ from app.services.workouts import (
     file_name,
     load_workout,
     plan_workout,
+    take_over_from_old,
     user_ftp,
 )
 
@@ -141,13 +142,26 @@ def workout_keyboard(row: StoredWorkout, workout, user, ftp) -> InlineKeyboardMa
         drop = "🗑 מחיקה"
     else:
         rows.append([InlineKeyboardButton("📅 העבר יום", callback_data=f"wk:day:{row.id}")])
-        drop = "🗑 הסרה מהשעון"
+        drop = "🗑 מחיקה (גם מהשעון)"
+
+    if row.status in (STATUS_PLANNED, STATUS_SENT):
+        rows.append([InlineKeyboardButton("✏️ שינוי עם המאמן", callback_data=f"wk:edit:{row.id}")])
 
     files = _file_buttons(row, workout, user, ftp)
     if files:
         rows.append(files)
-    rows.append([InlineKeyboardButton(drop, callback_data=f"wk:drop:{row.id}")])
+    # A kept workout is asked about before it goes; a draft nobody kept is not.
+    drop_action = "drop" if row.status == STATUS_DRAFT else "del"
+    rows.append([InlineKeyboardButton(drop, callback_data=f"wk:{drop_action}:{row.id}")])
     return InlineKeyboardMarkup(rows)
+
+
+def delete_confirm_keyboard(row: StoredWorkout) -> InlineKeyboardMarkup:
+    yes = "🗑 כן, למחוק גם מהשעון" if row.status == STATUS_SENT else "🗑 כן, למחוק"
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(yes, callback_data=f"wk:drop:{row.id}"),
+        InlineKeyboardButton("↩️ ביטול", callback_data=f"wk:back:{row.id}"),
+    ]])
 
 
 def preview_text(row: StoredWorkout, workout, user) -> str:
@@ -179,6 +193,8 @@ async def show_new_workouts(update: Update, chat_id: int, since: datetime) -> No
                 StoredWorkout.user_id == user.id,
                 StoredWorkout.status == STATUS_DRAFT,
                 StoredWorkout.created_at >= since,
+                # A week from build_week is shown as one summary, not workout by workout.
+                StoredWorkout.proposal_id.is_(None),
             )
             .order_by(col(StoredWorkout.id))
         ).all()
@@ -191,6 +207,13 @@ async def show_new_workouts(update: Update, chat_id: int, since: datetime) -> No
             previews.append((text, keyboard))
     for text, keyboard in previews:
         await _reply(update, text, reply_markup=keyboard)
+
+
+def retire_old_version(tasks, session: Session, user, row: StoredWorkout) -> None:
+    """A new version was kept: the one it replaces goes - from the watch through the worker."""
+    old_on_watch = take_over_from_old(session, user.id, row)
+    if old_on_watch is not None:
+        tasks.remove_workout_task.delay(user.id, old_on_watch, True)
 
 
 async def _edit(query, text: str, keyboard) -> None:
@@ -232,6 +255,19 @@ async def on_workout_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.edit_message_reply_markup(reply_markup=picker_keyboard(row))
             return
 
+        if action == "del":
+            await query.edit_message_reply_markup(reply_markup=delete_confirm_keyboard(row))
+            return
+
+        if action == "edit":
+            context.user_data[EDIT_KEY] = workout_id
+            context.user_data[CHAT_MODE_KEY] = True
+            await query.message.reply_text(
+                f"✏️ מה לשנות ב*{row.name}*? למשל: _תקצר ל-40 דקות_ או _תחליף את האינטרוולים בריצה קלה_",
+                parse_mode="Markdown",
+            )
+            return
+
         if action == "pick" and day is not None:
             await query.edit_message_reply_markup(reply_markup=confirm_keyboard(row, workout, user, day))
             return
@@ -245,6 +281,7 @@ async def on_workout_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         if action == "save" and day is not None:
             plan_workout(session, user.id, workout_id, day)
+            retire_old_version(tasks, session, user, row)
             _, _, _, text, keyboard = _render(session, user, workout_id)
             await _edit(query, text, keyboard)
             return
@@ -257,6 +294,7 @@ async def on_workout_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 # Saved for that day first: if Garmin refuses or throttles,
                 # the workout is still in the athlete's week and reminder.
                 plan_workout(session, user.id, workout_id, day)
+            retire_old_version(tasks, session, user, row)
             await query.edit_message_reply_markup(reply_markup=None)
             tasks.send_workout_task.delay(user.id, workout_id, day.isoformat())
             await query.message.reply_text(f"⏳ שולח לשעון ל{day_label(day)}...")
@@ -297,6 +335,8 @@ async def on_workout_action(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # from a day in the week view arrives already set for that day.
 
 BUILDER_KEY = "workout_builder"
+# Set by "✏️ שינוי עם המאמן": the next typed message is a change to that workout.
+EDIT_KEY = "workout_edit"
 # Set by "✍️ אכתוב בעצמי" from a day in the week: the next typed request to
 # the coach is for that day.
 FREE_DAY_KEY = "workout_builder_day"
@@ -342,6 +382,25 @@ def sport_keyboard(day_code: str = "0") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(_rows(buttons, 2))
 
 
+def _back(callback: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton("↩️ חזרה", callback_data=callback)
+
+
+def back_from_amount(sport: str, day_code: str) -> str:
+    """Where ↩️ goes from choosing an amount: the time/distance question, or the sport list."""
+    return f"wkb:s:{sport}:{day_code}" if sport in DISTANCE_SPORTS else f"wkb:home:{day_code}"
+
+
+def mode_keyboard(sport: str, day_code: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏱ לפי זמן", callback_data=f"wkb:m:{sport}:t:{day_code}"),
+            InlineKeyboardButton("📏 לפי מרחק", callback_data=f"wkb:m:{sport}:d:{day_code}"),
+        ],
+        [_back(f"wkb:home:{day_code}")],
+    ])
+
+
 def amount_keyboard(sport: str, day_code: str) -> InlineKeyboardMarkup:
     """Common lengths, and "✍️ זמן אחר" for anything else. (Distance is always typed.)"""
     buttons = [
@@ -350,7 +409,14 @@ def amount_keyboard(sport: str, day_code: str) -> InlineKeyboardMarkup:
     ]
     rows = _rows(buttons, 3)
     rows.append([InlineKeyboardButton("✍️ זמן אחר", callback_data=f"wkb:o:{sport}:t:{day_code}")])
+    rows.append([_back(back_from_amount(sport, day_code))])
     return InlineKeyboardMarkup(rows)
+
+
+def typing_keyboard(sport: str, mode: str, day_code: str) -> InlineKeyboardMarkup:
+    """Under "type an amount": ↩️ to the buttons it came from."""
+    target = f"wkb:m:{sport}:t:{day_code}" if mode == "t" else back_from_amount(sport, day_code)
+    return InlineKeyboardMarkup([[_back(target)]])
 
 
 def distance_question(sport: str) -> str:
@@ -366,6 +432,7 @@ def focus_keyboard(sport: str, mode: str, amount: int, day_code: str) -> InlineK
     ]
     rows = _rows(buttons, 2)
     rows.append([InlineKeyboardButton("✍️ אכתוב בעצמי", callback_data=f"wkb:free:{day_code}")])
+    rows.append([_back(f"wkb:m:{sport}:{mode}:{day_code}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -417,6 +484,14 @@ async def on_builder_step(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     parts = (query.data or "").split(":")
     step = parts[1] if len(parts) > 1 else ""
+    # Any step - forward or ↩️ - leaves a half-typed amount behind.
+    context.user_data.pop(BUILDER_KEY, None)
+
+    if step == "home" and len(parts) == 3:
+        day = decode_day(parts[2])
+        title = f"🏋️ אימון ל{day_label(day)} - איזה?" if day else "🏋️ *בניית אימון*\n\nאיזה אימון?"
+        await query.edit_message_text(title, parse_mode="Markdown", reply_markup=sport_keyboard(parts[2]))
+        return
 
     if step == "day" and len(parts) == 3:
         day = decode_day(parts[2])
@@ -430,11 +505,9 @@ async def on_builder_step(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if step == "s" and len(parts) in (3, 4) and parts[2] in FOCUS:
         sport, day_code = parts[2], parts[3] if len(parts) == 4 else "0"
         if sport in DISTANCE_SPORTS:
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⏱ לפי זמן", callback_data=f"wkb:m:{sport}:t:{day_code}"),
-                InlineKeyboardButton("📏 לפי מרחק", callback_data=f"wkb:m:{sport}:d:{day_code}"),
-            ]])
-            await query.edit_message_text(f"{_title(sport, decode_day(day_code))}\n\nלפי זמן או לפי מרחק?", reply_markup=keyboard)
+            await query.edit_message_text(
+                f"{_title(sport, decode_day(day_code))}\n\nלפי זמן או לפי מרחק?", reply_markup=mode_keyboard(sport, day_code)
+            )
         else:
             await query.edit_message_text(
                 f"{_title(sport, decode_day(day_code))}\n\nכמה זמן?", reply_markup=amount_keyboard(sport, day_code)
@@ -453,7 +526,9 @@ async def on_builder_step(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Straight to typing: the distance is whatever the athlete wants.
         context.user_data[BUILDER_KEY] = {"sport": sport, "mode": "d", "day": day_code}
         await query.edit_message_text(
-            f"{_title(sport, decode_day(day_code))}\n\n{distance_question(sport)}", parse_mode="Markdown"
+            f"{_title(sport, decode_day(day_code))}\n\n{distance_question(sport)}",
+            parse_mode="Markdown",
+            reply_markup=typing_keyboard(sport, "d", day_code),
         )
         return
 
@@ -474,7 +549,11 @@ async def on_builder_step(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ask = "⏱ כמה זמן? כתוב דקות, למשל *75*, או שעות ודקות, למשל *1:15*"
         else:
             ask = distance_question(sport)
-        await query.edit_message_text(f"{_title(sport, decode_day(day_code))}\n\n{ask}", parse_mode="Markdown")
+        await query.edit_message_text(
+            f"{_title(sport, decode_day(day_code))}\n\n{ask}",
+            parse_mode="Markdown",
+            reply_markup=typing_keyboard(sport, mode, day_code),
+        )
         return
 
     if step == "f" and len(parts) == 7 and parts[2] in FOCUS and parts[3] in ("t", "d") and parts[4].isdigit():
@@ -535,8 +614,18 @@ async def handle_builder_text(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def with_free_day(context: ContextTypes.DEFAULT_TYPE, text: str) -> str:
-    """The athlete's own words, plus the day they picked in the week view (once)."""
+    """
+    The athlete's own words, plus what a button just set up (once): the day
+    picked in the week view, or the workout they asked to change.
+    """
+    notes = []
     iso = context.user_data.pop(FREE_DAY_KEY, None)
-    if not iso:
-        return text
-    return f"{text}\n\n(האימון הזה ליום {iso} - שמור אותו עם build_workout עם date={iso}.)"
+    if iso:
+        notes.append(f"האימון הזה ליום {iso} - שמור אותו עם build_workout עם date={iso}.")
+    editing = context.user_data.pop(EDIT_KEY, None)
+    if editing:
+        notes.append(
+            f"המתאמן רוצה לשנות את האימון workout_id={editing}. בנה גרסה חדשה עם build_workout "
+            f"ו-replaces_workout_id={editing} (את הישן תמצא ב-get_training_schedule)."
+        )
+    return text + "".join(f"\n\n({note})" for note in notes)
