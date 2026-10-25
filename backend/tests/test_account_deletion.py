@@ -16,6 +16,7 @@ from app.models.calorie_entry import CalorieBurnOverride, CalorieEntry
 from app.models.chat_message import ChatMessage
 from app.models.coach_event import CoachEvent
 from app.models.daily_metric import DailyMetric
+from app.models.history_import import HistoryImport
 from app.models.join_request import STATUS_APPROVED, JoinRequest
 from app.models.meal_plan import MealOption, MealPlan
 from app.models.personal_record import PersonalRecord
@@ -46,6 +47,9 @@ def _fill_every_table(session, make_activity, user):
     session.add(CalorieEntry(user_id=user.id, entry_date=date.today(), calories=500))
     session.add(CalorieBurnOverride(user_id=user.id, date=date.today(), calories=2400))
     session.add(PersonalRecord(user_id=user.id, record_type="run_5k", value=1500))
+    session.add(HistoryImport(
+        user_id=user.id, newest_date=date.today(), oldest_date=date.today(), next_date=date.today(), days_total=1,
+    ))
 
     plan = TrainingPlan(user_id=user.id, discipline="running", plan="p")
     meal = MealPlan(user_id=user.id, approach="a", target_calories=2000)
