@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     # fail-loudly-at-startup pattern as the other credentials above.
     telegram_bot_token: str
 
+    # Telegram Mini App (the visual dashboard opened from the chat). The URL
+    # is what the bot's menu button opens; empty means "no Mini App yet", and
+    # the bot simply keeps its usual menu. Telegram only opens https URLs.
+    miniapp_url: str = ""
+    # How old a launch's initData may be. Telegram signs it when the user
+    # taps the button, so an hour is generous for a real launch and short
+    # enough that a leaked string stops working the same day.
+    miniapp_init_data_max_age_seconds: int = 3600
+    # Lifetime of the Mini App's own session token - separate from the
+    # website's (access_token_expire_minutes, a day) on purpose: a phone
+    # WebView left open is the riskier place for a long-lived token.
+    miniapp_token_minutes: int = 60
+
     # Anthropic API key for the AI coach. Deliberately OPTIONAL (unlike the
     # credentials above): everything that doesn't involve Claude - linking
     # Garmin, syncing, the metrics buttons - must keep working before a key

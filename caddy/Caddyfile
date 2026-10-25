@@ -1,0 +1,33 @@
+# The Mini App's public entry point.
+#
+#   /api/*   -> the webapp service (app/webapp.py), over the compose network
+#   anything else -> static files of the Mini App page
+#
+# The domain comes from MINIAPP_DOMAIN in docker-compose.prod.yml. Naming a
+# real domain here is what makes Caddy fetch a Let's Encrypt certificate and
+# redirect http to https on its own.
+
+{$MINIAPP_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		# No X-Frame-Options DENY: Telegram Web shows Mini Apps inside an
+		# iframe, and DENY would leave a blank box there.
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy webapp:8000
+	}
+
+	handle {
+		root * /srv/miniapp
+		# Unknown paths fall back to index.html, so a link straight to
+		# /activity/123 still opens the app (it routes in the browser).
+		try_files {path} /index.html
+		file_server
+	}
+}
