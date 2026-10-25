@@ -57,6 +57,9 @@ from app.services.records import format_broken_records
 from app.services import workouts as workout_service
 from app.services.sync_lock import release as release_sync_lock
 from app.services.sync_lock import user_sync_lock
+from app.services.sync_lock import named_lock
+from app.services import history_import
+from app.models.history_import import STATUS_PAUSED, HistoryImport
 from app.services.metrics_view import (
     WATCH_STALE_HOURS,
     format_metrics_snapshot,
@@ -307,6 +310,76 @@ def _backfill_user_history(self, user_id: int, days: int = BACKFILL_DAYS) -> Non
             # Token already invalidated and the user already notified by the
             # regular sync path - nothing useful to add here.
             return
+
+
+# --- The one-time import of each user's past year ---------------------------
+# Runs every 10 minutes all day; does nothing outside the night window. One
+# chunk at a time for the whole server (the global lock), because the point
+# is a trickle of requests from this IP, not one trickle per user.
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def dispatch_history_import() -> None:
+    if settings.history_import_scope == "off":
+        return
+    if not history_import.in_night_window(
+        clock.now_local().hour, settings.history_import_start_hour, settings.history_import_end_hour
+    ):
+        return
+    if garmin_is_throttled():
+        return
+    with Session(engine) as session:
+        user_ids = history_import.eligible_user_ids(
+            session, settings.history_import_scope, settings.admin_chat_id
+        )
+        for user_id in user_ids:
+            history_import.ensure_import(session, user_id, clock.today(), settings.history_import_days)
+        history_import.resume_paused(session, user_ids)
+        next_user = history_import.next_user_to_import(session, user_ids)
+    if next_user is not None:
+        import_history_chunk_task.delay(next_user)
+
+
+@celery_app.task(soft_time_limit=BACKFILL_SOFT_LIMIT, time_limit=BACKFILL_HARD_LIMIT)
+def import_history_chunk_task(user_id: int) -> None:
+    job_lock = named_lock("history-import", BACKFILL_HARD_LIMIT + 60)
+    if not job_lock.acquire(blocking=False):
+        return  # the previous chunk is still running; the next tick tries again
+    try:
+        user_lock = user_sync_lock(user_id, SYNC_LOCK_SECONDS)
+        if not user_lock.acquire(blocking=False):
+            return  # this user's sync is running; never two writers at once
+        try:
+            _import_history_chunk(user_id)
+        finally:
+            release_sync_lock(user_lock)
+    finally:
+        release_sync_lock(job_lock)
+
+
+def _import_history_chunk(user_id: int) -> None:
+    with Session(engine) as session:
+        record = session.exec(select(HistoryImport).where(HistoryImport.user_id == user_id)).first()
+        account = session.exec(select(GarminAccount).where(GarminAccount.user_id == user_id)).first()
+        if record is None or account is None or account.disconnected_at is not None:
+            return
+        try:
+            garmin_session = resume_garmin_session(decrypt(account.encrypted_token))
+            history_import.run_chunk(
+                session,
+                record,
+                garmin_session,
+                chunk_days=settings.history_import_chunk_days,
+                pause_seconds=settings.history_import_pause_seconds,
+            )
+        except (GarminRateLimitError, history_import.ImportThrottled):
+            # Everyone's Garmin traffic shares this switch: the routine syncs
+            # and upload checks back off too, and the import waits it out.
+            mark_garmin_throttled()
+        except GarminAuthError:
+            record.status = STATUS_PAUSED
+            session.add(record)
+            session.commit()
 
 
 @celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)

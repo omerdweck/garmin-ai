@@ -40,6 +40,11 @@ def user_sync_lock(user_id: int, timeout_seconds: int):
     return _redis().lock(f"garmin-sync-lock:{user_id}", timeout=timeout_seconds)
 
 
+def named_lock(name: str, timeout_seconds: int):
+    """A lock for one kind of job across all workers, e.g. the history import."""
+    return _redis().lock(f"job-lock:{name}", timeout=timeout_seconds)
+
+
 def release(lock) -> None:
     try:
         lock.release()

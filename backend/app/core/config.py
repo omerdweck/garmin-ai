@@ -180,6 +180,24 @@ class Settings(BaseSettings):
     anomaly_min_weekly_minutes: int = 90
     anomaly_min_chronic_load: int = 50
 
+    # --- One-time import of each user's past year ------------------------
+    # Who it runs for: "off", "admin" (only the owner - to measure it on one
+    # account before everyone) or "all". Starts at "admin" on purpose.
+    history_import_scope: str = "admin"
+    # A year for the Mini App's year view, plus six weeks before it: Fitness
+    # is a 42-day average, and without those weeks its line would start the
+    # year at zero and climb for no reason.
+    history_import_days: int = 365 + 42
+    # Only at night (Israel time), when nobody is waiting on a sync. The
+    # window wraps midnight: 23:00 until 06:00.
+    history_import_start_hour: int = 23
+    history_import_end_hour: int = 6
+    # Days per task run, and the pause between Garmin calls. A day is four
+    # calls, so 25 days is ~100 calls spread over ~5 minutes - well inside
+    # the task's time limit and far gentler than the routine backfill.
+    history_import_chunk_days: int = 25
+    history_import_pause_seconds: float = 2.5
+
     # --- Workouts on the watch ---------------------------------------------
     # Sports whose workouts may be sent to anyone's Garmin account, comma
     # separated (e.g. "running,cycling"). Empty by default on purpose: the

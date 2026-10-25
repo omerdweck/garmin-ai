@@ -25,6 +25,7 @@ columns it needs from user and garmin_account (see the miniapp_readonly
 migration), and a whole-row load would ask for the rest.
 """
 
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -37,6 +38,7 @@ from app.core.security import create_miniapp_token, decode_miniapp_token
 from app.core.telegram_webapp import InitDataError, validate_init_data
 from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
+from app.models.history_import import HistoryImport
 from app.models.user import User
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
@@ -123,3 +125,25 @@ def auth(body: AuthRequest, session: Session = Depends(get_session)) -> AuthResp
 @router.get("/me", response_model=MeResponse)
 def me(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> MeResponse:
     return MeResponse(user_id=user_id, garmin_linked=_garmin_linked(session, user_id))
+
+
+class HistoryStatus(BaseModel):
+    # "none" until the first night run creates the row; then pending,
+    # running, done or paused (see app/models/history_import.py).
+    status: str
+    percent: int
+    # The day the import has reached so far: the year view can grey out
+    # everything older than this instead of drawing it as empty.
+    loaded_from: Optional[str] = None
+
+
+@router.get("/history-status", response_model=HistoryStatus)
+def history_status(
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)
+) -> HistoryStatus:
+    record = session.exec(select(HistoryImport).where(HistoryImport.user_id == user_id)).first()
+    if record is None:
+        return HistoryStatus(status="none", percent=0)
+    # next_date is the next day still to fetch, so the loaded range starts the day after it.
+    loaded_from = record.oldest_date if record.status == "done" else record.next_date + timedelta(days=1)
+    return HistoryStatus(status=record.status, percent=record.percent, loaded_from=loaded_from.isoformat())
