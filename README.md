@@ -88,12 +88,25 @@ cycling, swimming, strength, HIIT, yoga, mobility, cardio), and the athlete
 gets a preview with buttons: 📲 to the watch (today, tomorrow, or the day it
 was planned for), 📄 a file, or 🗑. The "🏋️ בנה אימון" button builds one
 from a few taps: sport, by time (a preset, or typed: "1:15") or by distance
-(typed: "5.5" km, or metres for swimming), focus. Every workout gets a day: 📅 opens the next seven days, then
-💾 saves it in the bot or 📲 also puts it on the Garmin calendar. "📋 התוכנית
-שלי" shows the week ahead - the weekly plan and every saved workout - with ➕
-to build a workout straight into any day. Files: `.fit` (made by Garmin
-itself, so the watch reads it), and for cycling `.zwo` (Zwift), `.mrc`
-(%FTP) and `.erg` (watts).
+(typed: "5.5" km, or metres for swimming), focus. Every workout gets a day:
+📅 opens the next seven days, then 💾 saves it in the bot or 📲 also puts it
+on the Garmin calendar; every step has ↩️ back.
+
+**A training week built with the coach** — "🗓 בניית לו״ז עם המאמן": the
+athlete says what they want ("3 strength sessions, each a different muscle
+group, and 2 runs for endurance"), and the coach builds the whole dated week
+in one call (`build_week`) from that and their data. Changes are asked for in
+the same conversation and replace the proposal. Then it is reviewed workout
+by workout (📲 to the watch / 💾 keep in the bot / ⏭ skip, with ◀️ ▶️) or
+all at once.
+
+**🗓 לו״ז אימונים שבועי** — Sunday to Saturday, with ◀️ ▶️ between weeks:
+every workout actually done (planned or not), what is planned (💾 / 📲),
+and ⏭ for a planned workout that was not done. ➕ adds one to any day from
+today; each planned workout opens with ✏️ change it with the coach (the old
+version goes when the new one is kept - from the watch too), 📅 move it, or
+🗑 delete it (asked first; also removed from the watch). **📈 סיכום שבועי**
+counts the week's workouts by type.
 
 **Anomaly alerts** — after every sync, six rules compare the last few days
 with the athlete's *own* previous four weeks: HRV falling three days in a
@@ -433,6 +446,9 @@ your responsibility.
   sync, and the migration that added the columns filled them for the whole
   history from `raw_json` with plain SQL — no Garmin requests. A test runs
   both paths on the same response and checks they agree.
+- **A coach turn never ends silent.** Building a week can take many tool
+  rounds; if the loop runs out of rounds or of output, one more call with
+  tools switched off makes the coach say what it did.
 - **The coach never writes Garmin JSON.** It writes a small schema of our
   own (`services/workout_schema.py`, Pydantic), validated per sport: a
   1:30/km pace, heart-rate zone 7 or an exercise missing from Garmin's

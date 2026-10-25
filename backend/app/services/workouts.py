@@ -8,6 +8,7 @@ gated by `can_send_to_watch` - see WORKOUT_UPLOAD_SPORTS in config.py.
 """
 
 import logging
+import secrets
 from datetime import date
 from typing import Optional
 
@@ -38,7 +39,19 @@ class WorkoutNotFound(LookupError):
     pass
 
 
-def save_workout(session: Session, user_id: int, workout: Workout, source: str = "coach") -> StoredWorkout:
+def save_workout(
+    session: Session, user_id: int, workout: Workout, source: str = "coach", replaces: Optional[int] = None
+) -> StoredWorkout:
+    """
+    A new draft. `replaces` names one of this user's workouts it is a new
+    version of; the old one is only removed once this one is kept
+    (see take_over_from_old).
+    """
+    old = session.get(StoredWorkout, replaces) if replaces else None
+    if old is not None and (old.user_id != user_id or old.status == STATUS_REMOVED):
+        old = None
+    if old is not None and workout.date is None and old.scheduled_for:
+        workout = workout.model_copy(update={"date": old.scheduled_for})
     row = StoredWorkout(
         user_id=user_id,
         sport=workout.sport,
@@ -46,6 +59,7 @@ def save_workout(session: Session, user_id: int, workout: Workout, source: str =
         spec=workout.model_dump(mode="json", exclude_none=True),
         source=source,
         scheduled_for=workout.date,
+        replaces_workout_id=old.id if old else None,
     )
     session.add(row)
     session.commit()
@@ -169,6 +183,28 @@ def plan_workout(session: Session, user_id: int, workout_id: int, day: date) -> 
     return row
 
 
+def take_over_from_old(session: Session, user_id: int, row: StoredWorkout) -> Optional[int]:
+    """
+    Called when a new version is saved or sent: the version it replaces
+    goes. Returns that old workout's id when it is on the watch - the caller
+    queues its removal from Garmin; anything else is removed right here.
+    """
+    if not row.replaces_workout_id:
+        return None
+    old = session.get(StoredWorkout, row.replaces_workout_id)
+    row.replaces_workout_id = None
+    session.add(row)
+    session.commit()
+    if old is None or old.user_id != user_id or old.status == STATUS_REMOVED:
+        return None
+    if old.status == STATUS_SENT:
+        return old.id
+    old.status = STATUS_REMOVED
+    session.add(old)
+    session.commit()
+    return None
+
+
 def discard_draft(session: Session, user_id: int, workout_id: int) -> bool:
     """Removes a workout that is not on the watch (a draft, or one saved for a day)."""
     row = session.get(StoredWorkout, workout_id)
@@ -202,3 +238,68 @@ def scheduled_between(session: Session, user_id: int, first: date, last: date) -
         .order_by(col(StoredWorkout.scheduled_for), col(StoredWorkout.id))
     ).all()
 
+
+
+def save_week(session: Session, user_id: int, workouts: list[Workout]) -> tuple[str, list[StoredWorkout]]:
+    """
+    A week the coach proposed, saved as drafts that share one proposal id.
+    Any earlier proposal still waiting for review is withdrawn: the athlete
+    asked for changes, and two versions of the same week side by side would
+    leave them choosing between the old and the new one workout by workout.
+    """
+    for old in session.exec(
+        select(StoredWorkout).where(
+            StoredWorkout.user_id == user_id,
+            StoredWorkout.status == STATUS_DRAFT,
+            StoredWorkout.proposal_id.is_not(None),
+        )
+    ).all():
+        old.status = STATUS_REMOVED
+        session.add(old)
+
+    proposal_id = secrets.token_hex(6)
+    rows = []
+    for workout in sorted(workouts, key=lambda w: w.date):
+        row = StoredWorkout(
+            user_id=user_id,
+            sport=workout.sport,
+            name=workout.name,
+            spec=workout.model_dump(mode="json", exclude_none=True),
+            scheduled_for=workout.date,
+            proposal_id=proposal_id,
+        )
+        session.add(row)
+        rows.append(row)
+    session.commit()
+    for row in rows:
+        session.refresh(row)
+    return proposal_id, rows
+
+
+def proposal_rows(
+    session: Session, user_id: int, proposal_id: str, include_removed: bool = False
+) -> list[StoredWorkout]:
+    """
+    The workouts of one proposed week, in date order. The review includes
+    the skipped ones, so "workout 3 of 5" keeps meaning the same workout.
+    """
+    query = select(StoredWorkout).where(
+        StoredWorkout.user_id == user_id, StoredWorkout.proposal_id == proposal_id
+    )
+    if not include_removed:
+        query = query.where(StoredWorkout.status != STATUS_REMOVED)
+    return session.exec(query.order_by(col(StoredWorkout.scheduled_for), col(StoredWorkout.id))).all()
+
+
+def latest_proposal_since(session: Session, user_id: int, since) -> Optional[str]:
+    row = session.exec(
+        select(StoredWorkout)
+        .where(
+            StoredWorkout.user_id == user_id,
+            StoredWorkout.proposal_id.is_not(None),
+            StoredWorkout.status == STATUS_DRAFT,
+            StoredWorkout.created_at >= since,
+        )
+        .order_by(col(StoredWorkout.id).desc())
+    ).first()
+    return row.proposal_id if row else None

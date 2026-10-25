@@ -689,11 +689,15 @@ def workout_fit_task(user_id: int, workout_id: int) -> None:
 
 
 @celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
-def remove_workout_task(user_id: int, workout_id: int) -> None:
+def remove_workout_task(user_id: int, workout_id: int, replaced: bool = False) -> None:
+    """`replaced`: the old version of a workout that was just edited - said differently."""
     with Session(engine) as session:
         user = session.get(User, user_id)
         if user is None or user.telegram_chat_id is None:
             return
         with _workout_errors(user.telegram_chat_id, f"remove {workout_id}"):
             workout_service.remove_from_watch(session, user, workout_id)
-            send_telegram_message(user.telegram_chat_id, "🗑 הוסר מהלוח של Garmin.")
+            send_telegram_message(
+                user.telegram_chat_id,
+                "🔁 הגרסה הקודמת הוסרה מהשעון." if replaced else "🗑 נמחק מהלו״ז ומהלוח של Garmin.",
+            )

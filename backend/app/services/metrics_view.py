@@ -572,6 +572,40 @@ def _training_load_lines(metrics: list[DailyMetric]) -> list[str]:
     return lines
 
 
+FAMILY_NAMES = {
+    "running": "ריצה",
+    "cycling": "רכיבה",
+    "swimming": "שחייה",
+    "strength": "כוח",
+    "walking": "הליכה",
+    "hiking": "טיול",
+    "yoga": "יוגה",
+    "hiit": "HIIT",
+    "mobility": "מוביליטי",
+    "cardio": "קרדיו",
+}
+
+
+def workout_breakdown(activities) -> str:
+    """
+    '3 אימוני ריצה, אימון שחייה אחד' - most frequent first, grouped the way
+    people talk about their week (a treadmill run is a run).
+    """
+    # Imported here: schedule reads workouts and plans, and only this needs it.
+    from app.services.activity_view import type_label
+    from app.services.schedule import activity_family
+
+    counts: dict[str, int] = {}
+    for activity in activities:
+        family = activity_family(activity.activity_type) or "other"
+        counts[family] = counts.get(family, 0) + 1
+    parts = []
+    for family, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+        name = FAMILY_NAMES.get(family) or type_label(family).split(" ", 1)[-1]
+        parts.append(f"אימון {name} אחד" if count == 1 else f"{count} אימוני {name}")
+    return ", ".join(parts)
+
+
 def format_week(session: Session, user_id: int) -> str:
     """Seven-day rollup - the view that answers 'how has my week actually been'."""
     metrics = _recent_metrics(session, user_id, days=7)
@@ -585,7 +619,7 @@ def format_week(session: Session, user_id: int) -> str:
         ).all()
     )
 
-    lines = [_rtl("📅 *השבוע האחרון*"), ""]
+    lines = [_rtl("📈 *סיכום שבועי · 7 הימים האחרונים*"), ""]
 
     total_steps = sum(m.steps for m in metrics if m.steps is not None)
     if total_steps:
@@ -605,7 +639,7 @@ def format_week(session: Session, user_id: int) -> str:
     if activities:
         total_distance = sum(a.distance_meters or 0 for a in activities)
         total_minutes = sum((a.duration_seconds or 0) // 60 for a in activities)
-        lines.append(_rtl(f"🏃 אימונים — *{len(activities)}*"))
+        lines.append(_rtl(f"🏃 סה\"כ *{len(activities)}* אימונים: {workout_breakdown(activities)}"))
         if total_minutes:
             lines.append(_rtl(f"⏱ סה\"כ זמן — *{int(total_minutes)}* דקות"))
         if total_distance > 100:

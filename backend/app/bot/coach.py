@@ -33,6 +33,7 @@ from app.services.usage_limits import QuotaExceeded, check_quota
 from app.bot.calories import CALORIE_KEY
 from app.bot.common import CHAT_KEYBOARD, CHAT_MODE_KEY, MAIN_KEYBOARD, _find_user, _reply, _require_active
 from app.bot.manual_activity import MANUAL_KEY
+from app.bot.schedule import show_week_proposal
 from app.bot.workouts import BUILDER_KEY, show_new_workouts, with_free_day
 from app.core import clock
 
@@ -246,6 +247,9 @@ async def run_coach_turn(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     # the model is free to word however it likes.
     if "build_workout" in tools_used:
         await show_new_workouts(update, chat_id, since=started)
+
+    if "build_week" in tools_used:
+        await show_week_proposal(update, chat_id, since=started)
 
     if "set_training_plan" in tools_used:
         await update.effective_chat.send_message(

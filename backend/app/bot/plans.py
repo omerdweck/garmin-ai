@@ -1,7 +1,6 @@
 """
-Showing, approving, cancelling and deleting training plans.
-
-Moved verbatim from the former single-file app/bot.py.
+The plan buttons: building a week with the coach, and approving or deleting
+the old-style weekly templates. The week itself is shown by bot/schedule.py.
 """
 
 from sqlmodel import Session
@@ -14,12 +13,8 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from datetime import timedelta
 
-from app.bot.workouts import encode_day
-from app.core import clock
 from app.db.session import engine
-from app.services.workouts import scheduled_between
 # Aliased: activity_view exports a type_label too, and a bare import of both
 # silently left whichever came last in force.
 from app.services.plan_view import (
@@ -28,61 +23,10 @@ from app.services.plan_view import (
     cancel_plan,
     discard_pending,
     discipline_label,
-    day_label,
     format_upcoming_week,
 )
-from app.bot.common import CHAT_KEYBOARD, CHAT_MODE_KEY, MAIN_KEYBOARD, _find_user, _reply, _reply_plain, _require_active
+from app.bot.common import CHAT_KEYBOARD, CHAT_MODE_KEY, MAIN_KEYBOARD, _find_user, _reply_plain, _require_active
 
-
-
-def week_keyboard(saved, has_plan: bool) -> InlineKeyboardMarkup:
-    """
-    ➕ for every day of the coming week (opens the workout builder already
-    set for that day), a button per saved workout, and the plan actions.
-    """
-    today = clock.today()
-    days = [today + timedelta(days=offset) for offset in range(7)]
-    add = [
-        InlineKeyboardButton(f"➕ {day_label(day, today)}", callback_data=f"wkb:day:{encode_day(day)}")
-        for day in days
-    ]
-    rows = [add[:4], add[4:]]
-    for workout in saved[:8]:
-        rows.append([InlineKeyboardButton(
-            f"🔍 {workout.name} · {day_label(workout.scheduled_for, today)}", callback_data=f"wk:open:{workout.id}"
-        )])
-    rows.append([InlineKeyboardButton("✨ בניית תוכנית חדשה", callback_data="plan:new")])
-    if has_plan:
-        rows.append([InlineKeyboardButton("🗑 מחיקת תוכנית", callback_data="plan:delete")])
-    return InlineKeyboardMarkup(rows)
-
-
-async def show_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    The week and the plan in one place: the next seven days (the weekly
-    plan plus every workout saved for a date), ➕ to add a workout to any
-    of them, and the plan actions. The delete action lives here rather than
-    on the main keyboard - a destructive button sitting next to ones people
-    press daily is a mis-tap waiting to happen, and it belongs with the
-    thing it destroys.
-    """
-    user_id = await _require_active(update)
-    if user_id is None:
-        return
-
-    with Session(engine) as session:
-        text = format_upcoming_week(session, user_id)
-        has_plan = bool(active_plans(session, user_id))
-        today = clock.today()
-        saved = scheduled_between(session, user_id, today, today + timedelta(days=6))
-        keyboard = week_keyboard(saved, has_plan)
-
-    if not text:
-        text = (
-            "📅 *השבוע שלך ריק*\n\n"
-            "אפשר להוסיף אימון לכל יום עם ➕, או לבנות תוכנית שבועית שלמה עם המאמן 👇"
-        )
-    await _reply(update, text, reply_markup=keyboard)
 
 
 async def on_plan_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -92,20 +36,17 @@ async def on_plan_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     action = query.data.split(":", 1)[1]
 
     if action == "new":
-        # Entering chat mode from here rather than making the user find the
-        # coach button: they have already said what they want to do.
         context.user_data[CHAT_MODE_KEY] = True
-        await query.edit_message_text(
-            "✨ *בניית תוכנית אימונים*\n\n"
+        await query.message.reply_text(
+            "🗓 *בניית לו״ז אימונים עם המאמן*\n\n"
             "המאמן רואה את כל הנתונים שלך - האימונים האחרונים, עומס האימונים, "
-            "השינה, ההתאוששות והמטרה שהגדרת - ובונה לפיהם תוכנית שבועית מותאמת.\n\n"
-            "ספר לו מה אתה רוצה להשיג, וכמה פעמים בשבוע אתה יכול להתאמן. "
-            "אפשר לבקש שינויים עד שהתוכנית מתאימה לך.\n\n"
-            "*התוכנית תיכנס למעקב רק אחרי שתאשר אותה.*",
+            "השינה, ההתאוששות והמטרה שהגדרת - ובונה לפיהם את האימונים לשבוע הקרוב, "
+            "כל אחד ביום שלו.\n\n"
+            "ספר לו מה אתה רוצה: כמה אימונים, מאילו סוגים, באילו ימים ובכמה זמן. "
+            "למשל: _3 אימוני כוח, כל אחד לשריר אחר, ו-2 ריצות לשיפור הסיבולת_.\n\n"
+            "אחרי שתאשר, תוכל להכניס כל אימון לשעון.",
             parse_mode="Markdown",
-        )
-        await query.message.chat.send_message(
-            "כתוב למאמן מה אתה רוצה 👇", reply_markup=CHAT_KEYBOARD
+            reply_markup=CHAT_KEYBOARD,
         )
         return
 

@@ -51,7 +51,8 @@ from app.models.usage_event import UsageEvent
 from app.services.anomalies import health_overview
 from app.services.workout_schema import parse_workout, search_exercises, tool_input_schema
 from app.services.workout_view import describe as describe_workout
-from app.services.workouts import can_send_to_watch, save_workout, user_ftp
+from app.services.schedule import schedule_as_dict
+from app.services.workouts import can_send_to_watch, save_week, save_workout, scheduled_between, user_ftp
 from app.services.athlete_profile import add_note, profile_as_dict, profile_prompt_block, update_profile
 from app.services.records import format_value, record_meta
 from app.services.weekly_report import build_weekly_facts, format_weekly_facts
@@ -63,8 +64,18 @@ logger = logging.getLogger(__name__)
 # ("what about last week?"), small enough that cost stays flat over time.
 CHAT_HISTORY_LIMIT = 20
 
-# Safety valve on the tool loop - a well-behaved turn uses 1-2 rounds.
-MAX_TOOL_ROUNDS = 6
+# Safety valve on the tool loop. A question uses 1-2 rounds; building a
+# week (read data, look up exercises, build, revise) can need several more.
+# Six was too few for that, and the turn ended with no answer at all.
+MAX_TOOL_ROUNDS = 10
+
+# Output ceiling per call. A whole week of structured workouts is a large
+# tool input, and 2,000 tokens cut it off mid-way. Only tokens actually
+# written are paid for, so a high ceiling costs nothing on short answers.
+CHAT_MAX_TOKENS = 8000
+
+# Asked for when a turn would otherwise end without a word to the athlete.
+WRAP_UP_REQUEST = "(כתוב עכשיו למתאמן תשובה קצרה: מה עשית ומה הצעד הבא. בלי כלים.)"
 
 
 class ClaudeNotConfiguredError(RuntimeError):
@@ -205,6 +216,22 @@ def _call_claude(
 # Tool definitions (the schemas Claude sees) and their implementations
 # --------------------------------------------------------------------------
 
+def _with_replaces(schema: dict) -> dict:
+    """build_workout's input: the workout, plus which existing workout it is a new version of."""
+    schema = json.loads(json.dumps(schema))
+    schema["properties"]["replaces_workout_id"] = {
+        "type": "integer",
+        "description": (
+            "Only when the athlete asked to change an existing workout: its workout_id. The old one "
+            "is removed (from the watch too) once they keep the new version."
+        ),
+    }
+    return schema
+
+
+# set_training_plan (an undated weekly template) is retired from the coach's
+# tools: weeks are now built dated, with build_week. Its executor below stays
+# while templates saved before it exist; remove both together.
 TOOLS = [
     {
         "name": "get_recent_daily_metrics",
@@ -285,8 +312,9 @@ TOOLS = [
     {
         "name": "get_training_plans",
         "description": (
-            "Returns every training plan previously prescribed to this user, one per discipline, "
-            "each with the date it was written. Call this before answering anything about progress, "
+            "Returns the OLD-style weekly templates (undated, one per discipline) prescribed "
+            "before dated schedules existed, each with the date it was written. For what is "
+            "planned on actual days use get_training_schedule. Call this before answering anything about progress, "
             "adherence, or 'the plan you gave me' - the chat history only holds the last few turns, "
             "so an older plan is not in context. Never describe a plan from memory: if this returns "
             "nothing for a discipline, say so instead of inventing one."
@@ -294,84 +322,11 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "set_training_plan",
-        "description": (
-            "Saves the training plan for ONE discipline so it survives beyond this conversation. "
-            "Call this whenever you prescribe a concrete plan. Saving a discipline replaces only "
-            "that discipline's plan and leaves the others alone, so a user can have a running plan "
-            "and a swimming plan at the same time. To revise an existing plan, call this again with "
-            "the same discipline and the full updated plan."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "discipline": {
-                    "type": "string",
-                    # A closed list, not free text: the same sport written two
-                    # different ways would create two rows and the user would
-                    # end up with duplicate, conflicting plans.
-                    "enum": ["running", "swimming", "cycling", "strength", "general"],
-                    "description": "Which discipline this plan covers. Use 'general' for overall fitness or mixed training.",
-                },
-                "plan": {
-                    "type": "string",
-                    "description": (
-                        "The reasoning behind the plan in Hebrew, self-contained enough to be "
-                        "understood weeks later without the surrounding conversation: what it is "
-                        "building toward, the overall approach, and how it should progress."
-                    ),
-                },
-                "sessions": {
-                    "type": "array",
-                    "description": (
-                        "The week, one entry per training day AND per rest day. Required whenever "
-                        "you prescribe an actual schedule. This is what lets the daily summary tell "
-                        "the user what they have tomorrow, so a plan without it cannot be followed "
-                        "day to day. Include rest days explicitly - an absent day is ambiguous."
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "day": {
-                                "type": "string",
-                                "enum": [
-                                    "sunday", "monday", "tuesday", "wednesday",
-                                    "thursday", "friday", "saturday",
-                                ],
-                            },
-                            "title": {
-                                "type": "string",
-                                "description": "Short name in Hebrew, e.g. 'ריצה קלה', 'אינטרוולים', 'מנוחה'.",
-                            },
-                            "details": {
-                                "type": "string",
-                                "description": (
-                                    "Exactly what to do, in Hebrew. For intervals give the full set "
-                                    "(warm-up, reps, recovery, cool-down). Someone reading this alone, "
-                                    "weeks later, must know what to do without asking."
-                                ),
-                            },
-                            "is_rest": {"type": "boolean"},
-                            "target_distance_km": {"type": "number"},
-                            "target_duration_minutes": {"type": "integer"},
-                            "target_pace": {
-                                "type": "string",
-                                "description": "Free text - a range or a feel is fine, e.g. '5:30-5:45/ק\"מ' or 'קצב שיחה'.",
-                            },
-                        },
-                        "required": ["day", "title"],
-                    },
-                },
-            },
-            "required": ["discipline", "plan"],
-        },
-    },
-    {
         "name": "delete_training_plan",
         "description": (
             "Removes the plan for one discipline - use when the user says they are stopping that "
-            "training, or the event it was built for has passed. Do not use it to replace a plan; "
-            "set_training_plan already overwrites."
+            "training, or the event it was built for has passed, or when a dated week from "
+            "build_week takes its place and they want the old template gone."
         ),
         "input_schema": {
             "type": "object",
@@ -532,7 +487,47 @@ TOOLS = [
             "them and call again. On success the athlete sees a preview with buttons below your "
             "reply, so do not repeat every step in your text - one or two sentences on the purpose."
         ),
-        "input_schema": tool_input_schema(),
+        "input_schema": _with_replaces(tool_input_schema()),
+    },
+    {
+        "name": "build_week",
+        "description": (
+            "Builds a whole training schedule - several dated workouts - in ONE call. Use it "
+            "whenever the athlete asks for a plan or schedule for the coming week(s), or for more "
+            "than one workout. Every workout needs a `date` (today up to 13 days ahead) and uses "
+            "the same schema as build_workout. It is a PROPOSAL: the athlete sees a day-by-day "
+            "summary and reviews each workout (to the watch / keep in the bot / skip). To change "
+            "anything, call build_week again with the complete updated week - it replaces the "
+            "previous proposal. Check get_training_schedule first so you do not clash with what is "
+            "already planned or done. If any workout is invalid, nothing is saved and you get the "
+            "errors per workout to fix."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workouts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 14,
+                    "items": tool_input_schema(),
+                }
+            },
+            "required": ["workouts"],
+        },
+    },
+    {
+        "name": "get_training_schedule",
+        "description": (
+            "The athlete's training week, Sunday to Saturday: what was actually done each day "
+            "(synced or added by hand), what is planned (saved in the bot or on the watch, with "
+            "state planned / done / missed), and any old weekly template. week_offset 0 = this "
+            "week, 1 = next week, -1 = last week. Call it before building or changing a schedule "
+            "and whenever the athlete asks what they have (or did) on a day."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"week_offset": {"type": "integer", "minimum": -4, "maximum": 2}},
+        },
     },
     {
         "name": "search_exercises",
@@ -1015,7 +1010,9 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
         return json.dumps(profile_as_dict(session, user.id), ensure_ascii=False)
 
     if name == "build_workout":
-        workout, errors = parse_workout(tool_input or {})
+        tool_input = dict(tool_input or {})
+        replaces = tool_input.pop("replaces_workout_id", None)
+        workout, errors = parse_workout(tool_input)
         if workout is None:
             return json.dumps(
                 {"saved": False, "errors": errors[:15], "hint": "Fix these and call build_workout again."},
@@ -1029,7 +1026,7 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
         )
         if uses_ftp and not user_ftp(session, user.id):
             warnings.append("No FTP in the profile: the watch needs watts. Ask for their FTP, or use 'power' in watts.")
-        row = save_workout(session, user.id, workout)
+        row = save_workout(session, user.id, workout, replaces=replaces if isinstance(replaces, int) else None)
         return json.dumps(
             {
                 "saved": True,
@@ -1040,6 +1037,14 @@ def _execute_tool(session: Session, user: User, name: str, tool_input: dict) -> 
             },
             ensure_ascii=False,
         )
+
+    if name == "build_week":
+        return json.dumps(_build_week(session, user, (tool_input or {}).get("workouts") or []), ensure_ascii=False)
+
+    if name == "get_training_schedule":
+        offset = (tool_input or {}).get("week_offset", 0)
+        offset = offset if isinstance(offset, int) and -4 <= offset <= 2 else 0
+        return json.dumps(schedule_as_dict(session, user.id, offset), ensure_ascii=False, default=str)
 
     if name == "search_exercises":
         return json.dumps({"exercises": search_exercises(str((tool_input or {}).get("query", "")))}, ensure_ascii=False)
@@ -1086,6 +1091,51 @@ def _load_history(session: Session, user_id: int) -> list[dict]:
     return history
 
 
+MAX_DAYS_IN_WEEK_PROPOSAL = 13
+
+
+def _build_week(session: Session, user: User, items: list) -> dict:
+    today = clock.today()
+    parsed, errors = [], []
+    for index, item in enumerate(items[:14], start=1):
+        workout, problems = parse_workout(item if isinstance(item, dict) else {})
+        label = f"workout {index}"
+        if workout is None:
+            errors += [f"{label}: {p}" for p in problems]
+            continue
+        if workout.date is None:
+            errors.append(f"{label}: every workout in a week needs a date")
+        elif not today <= workout.date <= today + timedelta(days=MAX_DAYS_IN_WEEK_PROPOSAL):
+            errors.append(f"{label}: date {workout.date} must be between {today} and {MAX_DAYS_IN_WEEK_PROPOSAL} days ahead")
+        else:
+            parsed.append(workout)
+    if not items:
+        errors.append("workouts is empty")
+    if errors:
+        return {"saved": False, "errors": errors[:20], "hint": "Nothing was saved. Fix these and call build_week again."}
+
+    proposal_id, rows = save_week(session, user.id, parsed)
+    return {
+        "saved": True,
+        "proposal_id": proposal_id,
+        "week": [
+            {
+                "workout_id": row.id,
+                "date": row.scheduled_for.isoformat(),
+                "sport": row.sport,
+                "name": row.name,
+                "can_send_to_watch": can_send_to_watch(user, row.sport),
+            }
+            for row in rows
+        ],
+        "athlete_sees": "A day-by-day summary below your reply, with buttons to review each workout.",
+    }
+
+
+def _text_of(response) -> str:
+    return "".join(block.text for block in response.content if block.type == "text").strip()
+
+
 def _store_message(session: Session, user_id: int, role: str, content: str) -> None:
     session.add(ChatMessage(user_id=user_id, role=role, content=content))
     session.commit()
@@ -1129,20 +1179,26 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
     if profile_block:
         system.append({"type": "text", "text": profile_block})
 
-    response = None
-    for _ in range(MAX_TOOL_ROUNDS):
-        response = _call_claude(
+    def ask(**extra):
+        return _call_claude(
             client,
             session=session,
             user_id=user.id,
             kind="chat",
             model=settings.claude_model,
-            max_tokens=2000,
+            max_tokens=CHAT_MAX_TOKENS,
             system=system,
             tools=TOOLS,
             messages=messages,
             output_config={"effort": "medium"},
+            **extra,
         )
+
+    response = None
+    rounds_left = MAX_TOOL_ROUNDS
+    while rounds_left:
+        rounds_left -= 1
+        response = ask()
 
         if response.stop_reason != "tool_use":
             break
@@ -1164,7 +1220,19 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
             tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
         messages.append({"role": "user", "content": tool_results})
 
-    reply = "".join(block.text for block in response.content if block.type == "text").strip()
+    reply = _text_of(response)
+    if not reply or response.stop_reason in ("tool_use", "max_tokens"):
+        # The turn ran out of rounds or of output with nothing said - the
+        # athlete would see an error although the work (a saved workout, a
+        # week) may well be done. One more call, tools off, says what it was.
+        logger.warning("Coach turn for user %s ended with %s; asking for a wrap-up", user.id, response.stop_reason)
+        if response.stop_reason == "end_turn":
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": WRAP_UP_REQUEST})
+        # After "tool_use" the last message is already the tool results;
+        # after "max_tokens" the cut-off answer is dropped and asked again.
+        response = ask(tool_choice={"type": "none"})
+        reply = _text_of(response) or reply
     if not reply:
         reply = "משהו השתבש בניסוח התשובה 🤔 תוכל לנסח את השאלה מחדש?"
 
@@ -1232,6 +1300,11 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
         "tomorrow": {
             "day": DAY_NAMES_HE[tomorrow_index],
             "sessions": tomorrow_sessions,
+            # Dated workouts the athlete kept (in the bot or on the watch).
+            "workouts": [
+                {"sport": w.sport, "name": w.name, "on_watch": w.status == "sent"}
+                for w in scheduled_between(session, user.id, today_date + timedelta(days=1), today_date + timedelta(days=1))
+            ],
         },
     }
 

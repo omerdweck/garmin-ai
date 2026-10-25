@@ -32,6 +32,14 @@ class StoredWorkout(SQLModel, table=True):
     spec: dict = Field(sa_column=Column(JSONB, nullable=False))
     source: str = "coach"
     status: str = Field(default=STATUS_DRAFT, index=True)
+    # Set on workouts the coach built together as one week (build_week).
+    # A revised week replaces the previous one by this id, and the review
+    # buttons walk through exactly the workouts that belong to it.
+    proposal_id: Optional[str] = Field(default=None, index=True)
+    # A new version of an existing workout ("✏️ שינוי עם המאמן"). The old one
+    # stays until this one is saved or sent - then it is removed, from the
+    # watch too, so editing never leaves the athlete with neither or both.
+    replaces_workout_id: Optional[int] = None
 
     scheduled_for: Optional[date_type] = None
     garmin_workout_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))

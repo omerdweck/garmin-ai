@@ -12,7 +12,6 @@ import pytest
 
 import app.tasks as tasks
 from app.bot import workouts as bot
-from app.bot.plans import week_keyboard
 from app.core import clock
 from app.core.config import settings
 from app.models.plan_session import PlanSession, week_index
@@ -142,18 +141,6 @@ def test_week_merges_plan_and_saved_workouts_on_the_same_day(session, make_user)
     assert "ריצה קלה" in today_block and "Legs" in today_block
 
 
-def test_week_keyboard_adds_to_every_day_and_opens_saved_ones(session, make_user):
-    me = make_user()
-    row = stored(session, me)
-    service.plan_workout(session, me.id, row.id, TODAY)
-
-    keyboard = week_keyboard([row], has_plan=False)
-    adds = [b for b in buttons(keyboard) if b.startswith("wkb:day:")]
-    assert adds == [f"wkb:day:{(TODAY + timedelta(days=i)).strftime('%Y%m%d')}" for i in range(7)]
-    assert f"wk:open:{row.id}" in buttons(keyboard)
-    assert "plan:delete" not in buttons(keyboard)
-
-
 # --- the buttons under a workout -------------------------------------------------------
 
 def test_a_draft_without_a_day_asks_for_one(session, owner):
@@ -199,7 +186,7 @@ def test_planned_and_sent_workouts_get_their_own_buttons(session, owner):
     session.commit()
     _, workout = service.load_workout(session, owner.id, row.id)
     sent = bot.workout_keyboard(row, workout, owner, ftp=None)
-    assert "🗑 הסרה מהשעון" in labels(sent)
+    assert "🗑 מחיקה (גם מהשעון)" in labels(sent)
     confirm = bot.confirm_keyboard(row, workout, owner, TODAY + timedelta(days=3))
     assert not any(b.startswith("wk:save") for b in buttons(confirm))  # moving it moves the watch too
 
@@ -306,7 +293,8 @@ def test_by_distance_goes_straight_to_typing(sport, unit):
     context, query = _tap(f"wkb:m:{sport}:d:0")
     assert context.user_data[bot.BUILDER_KEY] == {"sport": sport, "mode": "d", "day": "0"}
     assert unit in query.edit_message_text.call_args.args[0]
-    assert "reply_markup" not in query.edit_message_text.call_args.kwargs  # no preset buttons
+    # No preset distances - only the way back.
+    assert labels(query.edit_message_text.call_args.kwargs["reply_markup"]) == ["↩️ חזרה"]
 
 
 def test_no_distance_for_sports_without_one():
@@ -394,3 +382,29 @@ def test_deleted_and_unsaved_workouts_are_not_in_the_week(session, make_user):
 
     assert service.scheduled_between(session, me.id, TODAY, TODAY + timedelta(days=6)) == []
     assert format_upcoming_week(session, me.id) == ""
+
+
+# --- ↩️ back at every step ------------------------------------------------------------
+
+def _back_target(keyboard):
+    return next(b.callback_data for row in keyboard.inline_keyboard for b in row if b.text == "↩️ חזרה")
+
+
+def test_every_builder_step_can_go_back():
+    assert _back_target(bot.mode_keyboard("running", "0")) == "wkb:home:0"
+    assert _back_target(bot.amount_keyboard("running", "0")) == "wkb:s:running:0"  # to time-or-distance
+    assert _back_target(bot.amount_keyboard("yoga", "0")) == "wkb:home:0"  # yoga has no such question
+    assert _back_target(bot.focus_keyboard("running", "d", 5500, "0")) == "wkb:m:running:d:0"
+    assert _back_target(bot.typing_keyboard("running", "t", "0")) == "wkb:m:running:t:0"
+
+
+def test_home_shows_the_sports_again_and_keeps_the_day():
+    code = TODAY.strftime("%Y%m%d")
+    _, query = _tap(f"wkb:home:{code}")
+    keyboard = query.edit_message_text.call_args.kwargs["reply_markup"]
+    assert all(b.endswith(f":{code}") for b in buttons(keyboard))
+
+
+def test_going_back_from_typing_forgets_the_half_typed_amount():
+    context, _ = _tap("wkb:s:running:0", user_data={bot.BUILDER_KEY: {"sport": "running", "mode": "d", "day": "0"}})
+    assert bot.BUILDER_KEY not in context.user_data
