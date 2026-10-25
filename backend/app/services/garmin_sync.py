@@ -62,6 +62,35 @@ def _fetch_daily_payload(garmin_session: Garmin, date_str: str) -> dict:
     }
 
 
+def fetch_history_day(garmin_session: Garmin, date_str: str, pause_seconds: float = 0.0) -> dict:
+    """
+    The calls for one *past* day, for the history import. Four instead of the
+    routine six: the two training-load calls are skipped, because Garmin's
+    acute/chronic figures for a day a year ago add nothing the Mini App
+    can't compute from the workouts themselves - and leaving them out cuts
+    the import by a third. A pause between calls keeps the import a trickle.
+    """
+    payload = {}
+    for key, call in (
+        ("summary", get_daily_summary),
+        ("sleep", get_sleep_data),
+        ("hrv", get_hrv_data),
+        ("max_metrics", get_max_metrics),
+    ):
+        # Old days often have no HRV or sleep at all (an older watch, or
+        # before this one was bought), and the library returns None for
+        # them. The writer expects the empty shape instead.
+        payload[key] = call(garmin_session, date_str) or ([] if key == "max_metrics" else {})
+        if pause_seconds:
+            time.sleep(pause_seconds)
+    return payload
+
+
+def store_history_day(session: Session, user_id: int, target_date: date_type, payload: dict) -> None:
+    """Writes one imported day, with the same rules as a routine sync."""
+    _upsert_daily_metric(session, user_id, target_date, payload)
+
+
 def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, payload: dict) -> None:
     summary = payload["summary"]
     sleep = payload["sleep"]
@@ -213,7 +242,17 @@ def _sync_race_predictions(
 
 
 def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, limit: int = 20) -> None:
-    for raw_activity in get_activities(garmin_session, 0, limit):
+    store_activities(session, user_id, get_activities(garmin_session, 0, limit))
+
+
+def store_activities(session: Session, user_id: int, raw_activities: list[dict]) -> int:
+    """
+    Stores whichever of these Garmin activities aren't stored yet; returns
+    how many were new. Shared by the routine sync and the history import,
+    so both apply exactly the same rules.
+    """
+    added = 0
+    for raw_activity in raw_activities:
         garmin_activity_id = raw_activity.get("activityId")
         start_time_str = raw_activity.get("startTimeLocal")
         if garmin_activity_id is None or start_time_str is None:
@@ -259,8 +298,10 @@ def _sync_activities(session: Session, user_id: int, garmin_session: Garmin, lim
         # rest of the batch, which is what one shared transaction did.
         try:
             session.commit()
+            added += 1
         except IntegrityError:
             session.rollback()
+    return added
 
 
 def ensure_exercise_sets(session: Session, activity: Activity) -> Activity:

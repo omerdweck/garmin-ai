@@ -53,6 +53,12 @@ celery_app.conf.task_routes = {
 celery_app.conf.timezone = clock.LOCAL_TZ.key  # "Asia/Jerusalem" - one definition, in clock.py
 
 celery_app.conf.beat_schedule = {
+    # The one-time import of each user's past year. Every 10 minutes, but
+    # the task returns at once outside 23:00-06:00 - see dispatch_history_import.
+    "history-import": {
+        "task": "app.tasks.dispatch_history_import",
+        "schedule": crontab(minute="*/10"),
+    },
     # Twice a day: 08:00 catches the previous night's finalized sleep/HRV
     # data, 20:00 catches the day's steps/activities/stress before bed.
     "sync-all-garmin-accounts-morning": {
