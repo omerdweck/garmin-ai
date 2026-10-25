@@ -81,6 +81,47 @@ services:
       - redis
     command: python -m app.bot
 
+  # The Mini App's API - its own process (app/webapp.py), not the api
+  # service above. Publishes no port: only Caddy reaches it, over the
+  # compose network. Connects as miniapp_ro, a role that can only read and
+  # can't see passwords, Garmin tokens or coach conversations at all; these
+  # two lines override the owner credentials that come in from .env.
+  webapp:
+    restart: unless-stopped
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: miniapp_ro
+      POSTGRES_PASSWORD: ${MINIAPP_DB_PASSWORD:?set MINIAPP_DB_PASSWORD in .env - see the miniapp_readonly migration}
+    depends_on:
+      - db
+      - redis
+    command: uvicorn app.webapp:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
+
+  # The only service listening on the public internet: HTTPS for the Mini
+  # App. Gets and renews its own Let's Encrypt certificate, which is why
+  # port 80 must be open too (that's where Let's Encrypt checks the domain).
+  caddy:
+    restart: unless-stopped
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      MINIAPP_DOMAIN: ${MINIAPP_DOMAIN:-garmin-ai.duckdns.org}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Static files rather than code: the built page, served as-is.
+      - ./miniapp:/srv/miniapp:ro
+      # Certificates live here. Losing this volume means asking Let's
+      # Encrypt again on every restart, and its weekly limits are real.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - webapp
+
   db:
     restart: unless-stopped
     image: postgres:16
@@ -104,3 +145,5 @@ services:
 
 volumes:
   garmin_ai_pgdata:
+  caddy_data:
+  caddy_config:

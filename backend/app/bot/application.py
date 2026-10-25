@@ -5,6 +5,7 @@ Moved verbatim from the former single-file app/bot.py.
 """
 import logging
 
+from telegram import MenuButtonWebApp, WebAppInfo
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -151,6 +152,15 @@ async def _register_commands(application: Application) -> None:
             ("start", "חיבור חשבון גרמין"),
         ]
     )
+
+    # The button left of the message box opens the Mini App dashboard. Set
+    # without a chat_id, so it is everyone's default. It takes the place of
+    # Telegram's "/" menu button - the commands above still work, and still
+    # appear as soon as someone types "/".
+    if settings.miniapp_url:
+        await application.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="📊 הדשבורד", web_app=WebAppInfo(url=settings.miniapp_url))
+        )
 
 
 def main() -> None:

@@ -45,6 +45,31 @@ def decode_access_token(token: str) -> Optional[int]:
         return None
 
 
+# The Mini App's tokens carry an audience claim and the website's don't.
+# PyJWT rejects a token with an "aud" when no audience is expected, and one
+# without it when an audience is required - so a website token cannot open
+# the Mini App's API and a Mini App token cannot open the website's, even
+# though both are signed with the same secret_key.
+MINIAPP_AUDIENCE = "miniapp"
+
+
+def create_miniapp_token(user_id: int) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.miniapp_token_minutes)
+    payload = {"sub": str(user_id), "exp": expire, "aud": MINIAPP_AUDIENCE}
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_miniapp_token(token: str) -> Optional[int]:
+    """The user id from a valid, unexpired Mini App token; None for anything else."""
+    try:
+        payload = jwt.decode(
+            token, settings.secret_key, algorithms=[settings.jwt_algorithm], audience=MINIAPP_AUDIENCE
+        )
+        return int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, ValueError):
+        return None
+
+
 def generate_verification_token() -> str:
     """
     Generates a random, single-use token for one-off actions like email
