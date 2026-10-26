@@ -208,6 +208,11 @@ def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
         # A fresh workout gets its own message - and new records go inside
         # it rather than as a second message right next to it.
         new_workouts = fresh_activities_since(session, user_id, last_activity_before)
+        # The workout page's data, fetched now rather than when the workout is
+        # first opened - the most likely moment to open it is right after the
+        # post-workout message arrives.
+        for workout in new_workouts[:5]:
+            fetch_activity_detail_task.apply_async(args=[workout.id], countdown=5)
         if new_workouts and user.notify_post_workout:
             for event in record_post_workout_events(session, user, new_workouts, broken_records):
                 deliver_coach_event_task.delay(event.id)
@@ -310,6 +315,57 @@ def _backfill_user_history(self, user_id: int, days: int = BACKFILL_DAYS) -> Non
             # Token already invalidated and the user already notified by the
             # regular sync path - nothing useful to add here.
             return
+
+
+# --- One workout, second by second -------------------------------------------
+# Run right after a sync finds a new workout, and when the Mini App opens a
+# workout that doesn't have it yet. The Redis key is set by whoever enqueues
+# (so a page opened twice asks once) and cleared here when done.
+
+DETAIL_PENDING_KEY = "activity-detail-pending:{}"
+DETAIL_PENDING_SECONDS = 180
+
+
+def detail_pending_key(activity_id: int) -> str:
+    return DETAIL_PENDING_KEY.format(activity_id)
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def fetch_activity_detail_task(activity_id: int) -> None:
+    from garminconnect.exceptions import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+
+    from app.models.activity import Activity
+    from app.services.garmin_sync import fetch_activity_detail
+    from app.services.sync_lock import _redis
+
+    try:
+        if garmin_is_throttled():
+            return
+        with Session(engine) as session:
+            activity = session.get(Activity, activity_id)
+            if activity is None or activity.detail is not None or activity.garmin_activity_id is None:
+                return
+            account = session.exec(
+                select(GarminAccount).where(GarminAccount.user_id == activity.user_id)
+            ).first()
+            if account is None or account.disconnected_at is not None:
+                return
+            try:
+                garmin = resume_garmin_session(decrypt(account.encrypted_token))
+                fetch_activity_detail(session, activity, garmin)
+            except (GarminRateLimitError, GarminConnectTooManyRequestsError):
+                mark_garmin_throttled()
+            except (GarminAuthError, GarminConnectAuthenticationError):
+                # The routine sync handles a rejected login and tells the user.
+                pass
+            except Exception:
+                session.rollback()
+                logger.exception("Fetching detail for activity %s failed", activity_id)
+    finally:
+        try:
+            _redis().delete(detail_pending_key(activity_id))
+        except Exception:
+            pass
 
 
 # --- The one-time import of each user's past year ---------------------------

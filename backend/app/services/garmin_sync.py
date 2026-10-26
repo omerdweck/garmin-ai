@@ -22,6 +22,9 @@ from app.core.garmin_client import (
     get_activities,
     get_activities_between,
     get_daily_summary,
+    get_activity_hr_zones,
+    get_activity_laps,
+    get_activity_streams,
     get_exercise_sets,
     get_hrv_data,
     get_max_metrics,
@@ -35,6 +38,7 @@ from app.core.garmin_client import (
 from app.models.activity import SOURCE_GARMIN, Activity
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
+from app.services.activity_detail import build_detail
 from app.services.records import sync_personal_records
 from app.services.sleep_details import apply_sleep_details
 
@@ -482,3 +486,38 @@ def sync_user_garmin_data(
     session.commit()
 
     return broken_records
+
+
+def fetch_activity_detail(session: Session, activity: Activity, garmin_session: Garmin) -> Activity:
+    """
+    Fetches and stores the second-by-second detail of one Garmin workout
+    (three requests: streams, laps, heart-rate zones), and for strength
+    workouts the sets too, in the same go. Once per workout: a finished
+    workout never changes, so a stored detail is never fetched again.
+
+    Garmin errors are left to the caller - the Celery task turns throttling
+    into the shared back-off switch.
+    """
+    if activity.detail is not None or activity.garmin_activity_id is None:
+        return activity
+    from app.services.workout_stats import dashboard_sport
+
+    gid = activity.garmin_activity_id
+    streams = get_activity_streams(garmin_session, gid)
+    laps = get_activity_laps(garmin_session, gid)
+    try:
+        zones = get_activity_hr_zones(garmin_session, gid)
+    except Exception:
+        # Zones are the least important part: a workout without a heart-rate
+        # strap still deserves its map and splits.
+        logger.info("No heart-rate zones for activity %s", gid, exc_info=True)
+        zones = []
+    if activity.activity_type == "strength_training" and activity.exercise_sets is None:
+        activity.exercise_sets = get_exercise_sets(garmin_session, gid)
+
+    activity.detail = build_detail(streams, laps, zones, dashboard_sport(activity.activity_type))
+    activity.detail_fetched_at = datetime.now(timezone.utc)
+    session.add(activity)
+    session.commit()
+    session.refresh(activity)
+    return activity
