@@ -3,8 +3,31 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
 
 /**
- * The workout's route on a map. Leaflet with CARTO's raster tiles (free for
- * this scale, attribution required) - dark tiles, since the map sits inside
+ * Map tiles. CARTO's free basemaps now answer "API KEY REQUIRED", so:
+ *  - with VITE_MAPTILER_KEY set at build time: MapTiler's dark "dataviz" style
+ *    (free tier, key from cloud.maptiler.com - restrict it to our domain);
+ *  - without a key: OpenStreetMap's own tiles, darkened in CSS (.route-map.osm).
+ *    Fine for a small private bot; OSM asks heavy users to bring their own provider.
+ */
+const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY as string | undefined;
+const OSM = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+
+function tiles(): L.TileLayer {
+  if (MAPTILER_KEY) {
+    return L.tileLayer(`https://api.maptiler.com/maps/dataviz-dark/256/{z}/{x}/{y}{r}.png?key=${MAPTILER_KEY}`, {
+      maxZoom: 19,
+      attribution: `&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> ${OSM}`,
+    });
+  }
+  return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    className: "osm-dark",
+    attribution: OSM,
+  });
+}
+
+/**
+ * The workout's route on a map. Leaflet with dark tiles (see tiles() above), since the map sits inside
  * the dark summary card. The start and finish dots sit at the edge of the
  * private circles: the track arrives already trimmed (activity_detail.py).
  *
@@ -30,11 +53,7 @@ export function RouteMap({ track, color, cursor, height }: {
       scrollWheelZoom: false,
       tap: false,
     } as L.MapOptions);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      subdomains: "abcd",
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    }).addTo(m);
+    tiles().addTo(m);
     const line = L.polyline(track, { color, weight: 4, opacity: 0.95, lineCap: "round", lineJoin: "round" }).addTo(m);
     L.circleMarker(track[0], { radius: 6, color: "#fff", weight: 2, fillColor: "#111", fillOpacity: 1 }).addTo(m);
     L.circleMarker(track[track.length - 1], { radius: 6, color: "#fff", weight: 2, fillColor: color, fillOpacity: 1 }).addTo(m);

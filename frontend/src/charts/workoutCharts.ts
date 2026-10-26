@@ -39,9 +39,9 @@ export function hoursBySport(p: Palette, buckets: HoursBucket[], kind: string): 
     legend: {
       top: 0,
       left: "center",
-      itemWidth: 10,
-      itemHeight: 10,
-      icon: "roundRect",
+      itemWidth: 9,
+      itemHeight: 9,
+      icon: "circle",
       textStyle: { color: p.text, fontSize: 12 },
       inactiveColor: p.skeleton,
     },
@@ -76,7 +76,7 @@ export function hoursBySport(p: Palette, buckets: HoursBucket[], kind: string): 
       type: "bar",
       stack: "hours",
       barMaxWidth: 22,
-      itemStyle: { color: p.sport[sport.key] },
+      itemStyle: { color: p.sport[sport.key], borderColor: p.card, borderWidth: 1, borderRadius: 3 },
       emphasis: { focus: "series" },
       data: buckets.map((b) => Number(b[sport.key]) || 0),
     })),
@@ -85,7 +85,7 @@ export function hoursBySport(p: Palette, buckets: HoursBucket[], kind: string): 
 
 export function fitnessFatigue(p: Palette, days: LoadDay[]): ChartOption {
   const fitnessColor = p.sport.running;
-  const fatigueColor = p.dark ? "#d79b5e" : "#a8641f";
+  const fatigueColor = p.dark ? "#f48a52" : "#f07b3f";
   return {
     ...base(p),
     grid: { left: 32, right: 8, top: 36, bottom: 24 },
@@ -93,6 +93,9 @@ export function fitnessFatigue(p: Palette, days: LoadDay[]): ChartOption {
       top: 0,
       left: "center",
       textStyle: { color: p.text, fontSize: 12 },
+      icon: "circle",
+      itemWidth: 9,
+      itemHeight: 9,
       data: ["Fitness", "Fatigue"],
     },
     xAxis: {
@@ -113,7 +116,7 @@ export function fitnessFatigue(p: Palette, days: LoadDay[]): ChartOption {
         showSymbol: false,
         lineStyle: { width: 2.5, color: fitnessColor },
         itemStyle: { color: fitnessColor },
-        areaStyle: { color: fitnessColor, opacity: 0.08 },
+        areaStyle: { color: fitnessColor, opacity: 0.12 },
         data: days.map((d) => d.fitness),
       },
       {
@@ -156,7 +159,10 @@ export function form(p: Palette, days: LoadDay[]): ChartOption {
         barMaxWidth: 10,
         data: days.map((d) => ({
           value: d.form,
-          itemStyle: { color: d.form < FORM_RISK ? p.zone5 : d.form >= 0 ? p.sport.swimming : p.accent },
+          itemStyle: {
+            color: d.form < FORM_RISK ? p.zone5 : d.form >= 0 ? p.sport.swimming : p.accent,
+            borderRadius: d.form >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3],
+          },
         })),
         markLine: {
           silent: true,
@@ -188,7 +194,7 @@ export function yearCalendar(p: Palette, start: string, end: string, days: Calen
       show: false,
       min: 0,
       max,
-      inRange: { color: [p.skeleton, p.dark ? "#3c5ba8" : "#a9bff2", p.accent] },
+      inRange: { color: [p.skeleton, p.dark ? "#7a4a33" : "#f9c7a8", p.accent] },
     },
     calendar: {
       range: [start, end],

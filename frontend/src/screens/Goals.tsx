@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import { Chart, type Palette } from "../charts/Chart";
 import { clock, raceTrend, simpleTrend, type Point } from "../charts/healthCharts";
-import { Card, ChartPlaceholder, PageHeader } from "../components/ui";
+import { Icon } from "../components/icons";
+import { Card, ChartPlaceholder, HeroCard, PageHeader } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { SPORTS } from "../sports";
 
@@ -21,34 +22,58 @@ const todayIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+/** One circle per day, as in the mockup: black with a check when done, an orange ring for today. */
 function WeekCard({ week }: { week: Day[] }) {
   const today = todayIso();
   const planned = week.reduce((a, d) => a + d.planned.length, 0);
   const done = week.reduce((a, d) => a + d.done.length, 0);
   return (
-    <Card title="השבוע" caption="ראשון עד שבת. מסגרת מקווקוות: מתוכנן. צבע מלא: בוצע.">
-      <div className="week-grid">
-        {week.map((d, i) => (
-          <div key={d.date} className={`week-day${d.date === today ? " today" : ""}`}>
-            <div style={{ fontWeight: 500 }}>{DAY_NAMES[i]}</div>
-            <div className="stat-sub num" style={{ fontSize: 10 }}>{Number(d.date.slice(8))}</div>
-            {d.planned.map((w, j) => (
-              <span key={`p${j}`} className="chip planned" style={{ color: sportOf(w.sport).color }} title={w.name}>
-                {w.on_watch ? "⌚" : ""}{sportOf(w.sport).icon}
-              </span>
-            ))}
-            {d.done.map((w, j) => (
-              <span key={`d${j}`} className="chip done" style={{ background: sportOf(w.sport).color }} title={w.name}>
-                {sportOf(w.sport).icon} <span className="num">{w.minutes}</span>
-              </span>
-            ))}
-          </div>
-        ))}
+    <Card title="השבוע הנוכחי" caption="ראשון עד שבת. שחור: בוצע. מקווקו: מתוכנן.">
+      <div className="week-row">
+        {week.map((d, i) => {
+          const isDone = d.done.length > 0;
+          const isToday = d.date === today;
+          const cls = ["week-circle", isDone && "done", isToday && "today", !isDone && d.planned.length > 0 && "planned"].filter(Boolean).join(" ");
+          const sports = (isDone ? d.done : d.planned).map((w) => sportOf(w.sport).icon);
+          const names = [...d.done.map((w) => `✓ ${w.name} (${w.minutes} דק׳)`), ...d.planned.map((w) => `${w.name}${w.on_watch ? " ⌚" : ""}`)].join("\n");
+          return (
+            <div key={d.date} title={names || undefined}>
+              <div className={cls}>{isDone ? <Icon name="check" size={18} stroke={2.6} /> : null}</div>
+              <div className={`week-day-name${isToday ? " today" : ""}`}>{DAY_NAMES[i]}</div>
+              <div className="week-sports">{sports.slice(0, 2).join("")}</div>
+            </div>
+          );
+        })}
       </div>
       <p className="stat-sub" style={{ marginTop: 10 }}>
         {planned > 0 ? <>תוכננו <span className="num">{planned}</span>, בוצעו <span className="num">{done}</span></> : <>בוצעו <span className="num">{done}</span> אימונים. אין אימונים מתוכננים השבוע.</>}
       </p>
     </Card>
+  );
+}
+
+/** The dark card: the active plans and how this week is going against them. */
+function PlanHero({ data }: { data: Goals }) {
+  // Matched by count per day, like the weekly report: a planned day counts once something was done on it.
+  const planned = data.week.reduce((a, d) => a + d.planned.length, 0);
+  const met = data.week.reduce((a, d) => a + Math.min(d.done.length, d.planned.length), 0);
+  const done = data.week.reduce((a, d) => a + d.done.length, 0);
+  const minutes = data.week.reduce((a, d) => a + d.done.reduce((m, w) => m + w.minutes, 0), 0);
+  const latest = data.plans.map((p) => p.updated).sort().at(-1);
+  return (
+    <HeroCard
+      kicker={data.plans.length > 1 ? "תוכניות פעילות" : "תוכנית נוכחית"}
+      title={data.plans.map((p) => DISCIPLINES[p.discipline] ?? p.discipline).join(" · ")}
+      sub={latest ? <>עודכנה {new Date(`${latest}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "short", year: "numeric" })}</> : undefined}
+      progress={planned > 0 ? met / planned : undefined}
+      stats={[
+        planned > 0
+          ? { value: <span className="num">{met} / {planned}</span>, label: "מהתוכנית בוצעו" }
+          : { value: <span className="num">{done}</span>, label: "אימונים השבוע" },
+        { value: <span className="num">{(minutes / 60).toFixed(1)}</span>, label: "שעות השבוע" },
+        { value: <span className="num">{data.plans.length}</span>, label: "תוכניות" },
+      ]}
+    />
   );
 }
 
@@ -85,28 +110,17 @@ export function Goals() {
 
   return (
     <>
-      <PageHeader kicker="יעדים ותוכנית" title="יעדים" subtitle="לאן אתה הולך, ואיך אתה מתקדם לשם." />
+      <PageHeader title="יעדים ותוכניות" subtitle="מעקב אחר התקדמות וביצוע תוכניות." />
       <div className="grid">
         {error && <p className="stat-sub">הנתונים לא נטענו. נסה לסגור ולפתוח שוב.</p>}
-        {data ? <WeekCard week={data.week} /> : <Card title="השבוע" caption="ראשון עד שבת."><ChartPlaceholder height={90} /></Card>}
-
-        {data && data.plans.length > 0 && (
-          <Card title="תוכניות פעילות" caption="תוכניות שאישרת עם המאמן.">
-            <ul className="list">
-              {data.plans.map((plan) => (
-                <li key={plan.discipline}>
-                  <span>{sportOf(plan.discipline).icon} {DISCIPLINES[plan.discipline] ?? plan.discipline}</span>
-                  <span className="stat-sub">עודכנה {new Date(`${plan.updated}T00:00:00`).toLocaleDateString("he-IL")}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
+        {!data && !error && <div className="skeleton" style={{ height: 220, borderRadius: 24 }} />}
+        {data && data.plans.length > 0 && <PlanHero data={data} />}
+        {data ? <WeekCard week={data.week} /> : <Card title="השבוע הנוכחי" caption="ראשון עד שבת."><ChartPlaceholder height={90} /></Card>}
 
         {data && data.races.length > 0 && (
           <>
-            <h2 className="card-title" style={{ margin: "12px 4px 0" }}>תחזיות זמנים</h2>
-            <p className="card-caption" style={{ margin: "0 4px" }}>מה Garmin חושבת שתעשה במרוץ היום, לאורך השנה. למעלה = מהיר יותר.</p>
+            <h2 className="section-title">תחזיות זמנים</h2>
+            <p className="section-caption">מה Garmin חושבת שתעשה במרוץ היום, לאורך השנה. למעלה = מהיר יותר.</p>
             {data.races.map((race) => <RaceCard key={race.key} race={race} />)}
           </>
         )}

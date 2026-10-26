@@ -1,5 +1,7 @@
+import type { CSSProperties } from "react";
 import type { LoadDay } from "../charts/workoutCharts";
-import { Card, PageHeader } from "../components/ui";
+import { Icon } from "../components/icons";
+import { Card, HeroCard, PageHeader, Stat } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { SPORTS } from "../sports";
 
@@ -18,7 +20,7 @@ type TodayData = {
   streak_rule: number;
 };
 
-const STATE_COLOR = { good: "var(--sport-swimming)", normal: "var(--accent)", low: "var(--zone-5)", unknown: "var(--skeleton)" };
+const STATE_COLOR = { good: "#4fd1a1", normal: "#f5f3ef", low: "#ff8a7a", unknown: "rgba(245,243,239,0.5)" };
 const STATE_WORD = { good: "מעל הרגיל", normal: "בטווח הרגיל", low: "מתחת לרגיל", unknown: "אין נתון" };
 
 function greeting(hour: number): string {
@@ -35,26 +37,29 @@ const isToday = (iso: string | null) => {
   return iso === `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-function ReadinessRing({ ring }: { ring: Ring }) {
-  const circumference = 113;
-  const color = STATE_COLOR[ring.state];
+function readinessWords(score: number): string {
+  if (score >= 75) return "מוכן לאימון קשה";
+  if (score >= 50) return "מוכנות טובה";
+  if (score >= 25) return "יום מתון";
+  return "יום התאוששות";
+}
+
+/** The dark card: Garmin's readiness score, and each of the four signals under it. */
+function Readiness({ data }: { data: TodayData | null }) {
+  if (!data) return <div className="skeleton" style={{ height: 230, borderRadius: 24 }} />;
+  const score = data.readiness_score;
   return (
-    <div style={{ textAlign: "center", flex: 1 }}>
-      <svg viewBox="0 0 44 44" width="66" height="66" role="img" aria-label={`${ring.label}: ${ring.value ?? "אין נתון"}`}>
-        <circle cx="22" cy="22" r="18" fill="none" stroke="var(--skeleton)" strokeWidth="5" />
-        <circle
-          cx="22" cy="22" r="18" fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
-          strokeDasharray={circumference} strokeDashoffset={circumference * (1 - ring.fill)}
-          transform="rotate(-90 22 22)" style={{ transition: "stroke-dashoffset 0.8s ease" }}
-        />
-        <text x="22" y="26" textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--text)" style={{ fontFamily: "var(--font-body)" }}>
-          {ring.value ?? "—"}
-        </text>
-      </svg>
-      <div style={{ fontSize: 12, fontWeight: 500 }}>{ring.label}</div>
-      <div className="stat-sub" style={{ fontSize: 11, color }}>{STATE_WORD[ring.state]}</div>
-      {ring.value !== null && !isToday(ring.as_of) && <div className="stat-sub" style={{ fontSize: 10 }}>מאתמול</div>}
-    </div>
+    <HeroCard
+      kicker="מוכנות להיום"
+      title={score != null ? readinessWords(score) : "איך הגוף שלך היום"}
+      sub={score != null ? <>ציון המוכנות של Garmin: <span className="num">{score}/100</span></> : "ארבעת המדדים מול הנורמה האישית שלך"}
+      progress={score != null ? score / 100 : undefined}
+      stats={data.rings.map((r) => ({
+        value: <span className="num">{r.value ?? "—"}</span>,
+        label: r.label + (r.value !== null && !isToday(r.as_of) ? " · אתמול" : ""),
+        state: { text: STATE_WORD[r.state], color: STATE_COLOR[r.state] },
+      }))}
+    />
   );
 }
 
@@ -73,29 +78,42 @@ function WorkoutCard({ workout }: { workout: TodayData["workouts"][number] }) {
   const total = workout.blocks.reduce((a, b) => a + b.seconds, 0);
   return (
     <section className="card">
-      <div className="kicker">האימון של היום</div>
-      <h2 className="card-title">{sport.icon} {workout.name}</h2>
-      <p className="card-caption">
-        {workout.on_watch ? "⌚ נמצא בשעון" : "שמור בבוט, לא בשעון"}
-        {total > 0 && <> · כ-<span className="num">{Math.round(total / 60)}</span> דקות</>}
-      </p>
-      {total > 0 && (
-        <div className="blocks" dir="ltr" aria-hidden="true">
-          {workout.blocks.map((b, i) => {
-            const style = BLOCK_STYLE[b.kind] ?? BLOCK_STYLE.other;
-            return <span key={i} style={{ flex: b.seconds, height: `${style.h}%`, background: style.color }} />;
-          })}
+      <h2 className="card-title" style={{ marginBottom: 12 }}>האימון של היום</h2>
+      <div className="inner-box">
+        <div className="workout-row">
+          <span className="icon-circle lg" style={{ "--tone": "var(--orange)" } as CSSProperties}>{sport.icon}</span>
+          <div style={{ minWidth: 0 }}>
+            <div className="workout-name">{workout.name}</div>
+            <div className="stat-sub">
+              {sport.label}
+              {total > 0 && <> · כ-<span className="num">{Math.round(total / 60)}</span> דקות</>}
+            </div>
+          </div>
         </div>
-      )}
+        {total > 0 && (
+          <div className="blocks" dir="ltr" aria-hidden="true">
+            {workout.blocks.map((b, i) => {
+              const style = BLOCK_STYLE[b.kind] ?? BLOCK_STYLE.other;
+              return <span key={i} style={{ flex: b.seconds, height: `${style.h}%`, background: style.color }} />;
+            })}
+          </div>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <span className={`pill${workout.on_watch ? " dark" : ""}`}>
+            <Icon name="watch" size={14} stroke={2} />
+            {workout.on_watch ? "נמצא בשעון" : "שמור בבוט, עוד לא בשעון"}
+          </span>
+        </div>
+      </div>
     </section>
   );
 }
 
 function formWords(value: number): { text: string; color: string } {
-  if (value >= 5) return { text: "רענן. גוף מוכן לאימון קשה", color: "var(--sport-swimming)" };
-  if (value >= -10) return { text: "מאוזן", color: "var(--text)" };
-  if (value >= -30) return { text: "סופג עבודה. אזור האימון הפרודוקטיבי", color: "var(--accent)" };
-  return { text: "עומס גבוה. שווה יום קל", color: "var(--zone-5)" };
+  if (value >= 5) return { text: "רענן, מוכן לאימון קשה", color: "var(--good)" };
+  if (value >= -10) return { text: "מאוזן", color: "var(--muted)" };
+  if (value >= -30) return { text: "סופג עבודה, אזור פרודוקטיבי", color: "var(--accent)" };
+  return { text: "עומס גבוה, שווה יום קל", color: "var(--bad)" };
 }
 
 function FormAndStreak({ streak, rule }: { streak?: number; rule?: number }) {
@@ -104,24 +122,16 @@ function FormAndStreak({ streak, rule }: { streak?: number; rule?: number }) {
   const words = today ? formWords(today.form) : null;
   return (
     <div className="grid grid-2">
-      <section className="card">
-        <div className="kicker">Form היום</div>
-        {today && words ? (
-          <>
-            <div className="stat-value num" style={{ color: words.color }}>{today.form > 0 ? "+" : ""}{today.form.toFixed(0)}</div>
-            <div className="stat-sub">{words.text}</div>
-          </>
-        ) : data ? <div className="stat-sub">אין עדיין אימונים עם עומס.</div> : <div className="skeleton" style={{ height: 32, width: "50%", marginTop: 8 }} />}
-      </section>
-      <section className="card">
-        <div className="kicker">רצף</div>
-        {streak === undefined ? <div className="skeleton" style={{ height: 32, width: "50%", marginTop: 8 }} /> : (
-          <>
-            <div className="stat-value num">{streak > 0 ? `🔥 ${streak}` : "0"}</div>
-            <div className="stat-sub">שבועות ברצף עם {rule}+ אימונים</div>
-          </>
-        )}
-      </section>
+      <Stat
+        icon="gauge" tone="var(--sport-running)" label="Form היום"
+        value={today ? `${today.form > 0 ? "+" : ""}${today.form.toFixed(0)}` : data ? "—" : undefined}
+        sub={words ? words.text : data ? "אין עדיין אימונים עם עומס" : undefined}
+      />
+      <Stat
+        icon="flame" tone="var(--orange)" label="שבועות ברצף"
+        value={streak === undefined ? undefined : String(streak)}
+        sub={rule !== undefined ? `עם ${rule}+ אימונים בשבוע` : undefined}
+      />
     </div>
   );
 }
@@ -133,32 +143,27 @@ export function Today({ name }: { name: string }) {
 
   return (
     <>
-      <PageHeader kicker={date} title={`${greeting(now.getHours())}${name ? `, ${name}` : ""}`} />
+      <PageHeader title={`${greeting(now.getHours())}${name ? `, ${name}` : ""}`} subtitle={date} />
       <div className="grid">
         {data?.alert && (
           <section className="card alert" role="status">
-            <div className="kicker">⚠️ התראה פתוחה</div>
-            <div style={{ fontWeight: 500, marginTop: 4 }}>{data.alert.text}</div>
-            <div className="stat-sub">
-              מאז {new Date(`${data.alert.since}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "numeric" })} · פרטים בלשונית בריאות
+            <div className="alert-row">
+              <span className="icon-circle" style={{ "--tone": "var(--zone-5)" } as CSSProperties}><Icon name="alert" size={20} /></span>
+              <div>
+                <div style={{ fontWeight: 700 }}>{data.alert.text}</div>
+                <div className="stat-sub">
+                  מאז {new Date(`${data.alert.since}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "numeric" })} · פרטים בלשונית בריאות
+                </div>
+              </div>
             </div>
           </section>
         )}
 
-        <Card
-          kicker={data?.readiness_score != null ? `מוכנות להיום · Garmin: ${data.readiness_score}/100` : "מוכנות להיום"}
-          caption="HRV ודופק מנוחה נמדדים מול הנורמה האישית שלך, Body Battery ושינה בסולם 0–100."
-        >
-          {data ? (
-            <div style={{ display: "flex", gap: 4 }}>{data.rings.map((r) => <ReadinessRing key={r.key} ring={r} />)}</div>
-          ) : (
-            <div className="skeleton" style={{ height: 110 }} />
-          )}
-        </Card>
+        <Readiness data={data} />
 
         {data?.workouts.map((w, i) => <WorkoutCard key={i} workout={w} />)}
         {data && data.workouts.length === 0 && (
-          <Card kicker="האימון של היום" caption="אין אימון מתוכנן להיום. אפשר לבנות אחד עם המאמן בבוט." />
+          <Card title="האימון של היום" caption="אין אימון מתוכנן להיום. אפשר לבנות אחד עם המאמן בבוט." />
         )}
 
         <FormAndStreak streak={data?.streak_weeks} rule={data?.streak_rule} />

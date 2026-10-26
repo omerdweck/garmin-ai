@@ -1,12 +1,14 @@
 /*
- * The look, in one place. Light mode follows the video: cream paper, white
- * cards, serif headlines. Dark mode is the same layout on charcoal, since
- * most people run Telegram dark. <html data-theme> is set from Telegram's
- * colorScheme (see main.tsx); nothing else switches theme.
+ * The look, in one place - after Omer's mockup: off-white page, white
+ * rounded cards with a soft shadow, bold sans headlines, one dark "hero"
+ * card per screen with an orange accent, black pill controls, line icons.
+ * Dark mode is the same layout on charcoal, since most people run Telegram
+ * dark. <html data-theme> is set from Telegram's colorScheme (main.tsx).
  */
 
 :root {
-  --font-display: "Frank Ruhl Libre", Georgia, "Times New Roman", serif;
+  --font-brand: "Montserrat", "Heebo", system-ui, sans-serif;
+  --font-display: "Heebo", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body: "Heebo", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   /* One color per sport - see sports.ts. */
@@ -24,35 +26,52 @@
   --zone-4: #f08c2a;
   --zone-5: #e5484d;
 
-  --radius: 16px;
-  --gap: 12px;
-  --tabbar-height: 64px;
+  /* The mockup's orange, and the dark hero card (dark in both themes). */
+  --orange: #f07b3f;
+  --hero-text: #f5f3ef;
+  --hero-muted: rgba(245, 243, 239, 0.62);
+  --hero-line: rgba(255, 255, 255, 0.14);
+
+  --radius: 22px;
+  --radius-sm: 14px;
+  --gap: 14px;
+  --tabbar-height: 68px;
   /* Telegram sets these on new clients; env() covers the rest. */
   --safe-bottom: var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --safe-top: var(--tg-content-safe-area-inset-top, 0px);
 }
 
 :root[data-theme="light"] {
-  --bg: #f4f0e8;
+  --bg: #f5f4f0;
   --card: #ffffff;
-  --text: #1d1c1a;
-  --muted: #77736b;
-  --line: #e7e1d6;
-  --skeleton: #ece6da;
-  --accent: #3b6fe0;
+  --text: #141414;
+  --muted: #7a7873;
+  --line: #ecebe6;
+  --skeleton: #eeede8;
+  --accent: #f07b3f;
+  --good: #1f9d55;
+  --bad: #d93f3f;
   --warn: #c2410c;
+  --hero-bg: linear-gradient(160deg, #1c1d20 0%, #2b2c30 100%);
+  --shadow: 0 1px 2px rgba(20, 20, 20, 0.04), 0 8px 24px rgba(20, 20, 20, 0.05);
+  --card-border: rgba(20, 20, 20, 0.03);
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
-  --bg: #15171b;
-  --card: #1f2227;
-  --text: #eceae4;
+  --bg: #111214;
+  --card: #1c1e21;
+  --text: #f1efea;
   --muted: #9a978f;
-  --line: #2c3036;
-  --skeleton: #2a2e34;
-  --accent: #6d93ee;
+  --line: #2a2d31;
+  --skeleton: #272a2e;
+  --accent: #f48a52;
+  --good: #3ccb7f;
+  --bad: #f06a6a;
   --warn: #f59e5b;
+  --hero-bg: linear-gradient(160deg, #24262a 0%, #2f3135 100%);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --card-border: #26292d;
   color-scheme: dark;
 }
 
@@ -84,37 +103,123 @@ button {
   unicode-bidi: isolate;
 }
 
+.icon-svg {
+  display: block;
+  flex: none;
+}
+
 /* ---- layout ---------------------------------------------------------- */
 
 .app {
   min-height: 100vh;
-  padding: calc(16px + var(--safe-top)) 16px calc(var(--tabbar-height) + var(--safe-bottom) + 24px);
+  padding: calc(14px + var(--safe-top)) 16px calc(var(--tabbar-height) + var(--safe-bottom) + 24px);
   max-width: 560px;
   margin: 0 auto;
 }
 
-.page-header {
-  margin: 8px 0 20px;
+/* The top bar: brand on the left, avatar and bell on the right - as in the mockup. */
+.app-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 22px;
 }
 
-.kicker {
-  font-size: 11px;
+.brand {
+  direction: ltr;
+  font-family: var(--font-brand);
+  font-size: 21px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.brand b {
+  font-weight: 800;
+}
+
+.brand span {
   font-weight: 500;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  margin-left: 0.32em;
+}
+
+.app-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.icon-button {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.icon-button .badge {
+  position: absolute;
+  top: 10px;
+  right: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--orange);
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 700;
+  font-size: 17px;
+  box-shadow: 0 0 0 2px var(--card), var(--shadow);
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.page-header {
+  margin: 0 0 20px;
 }
 
 .page-title {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 34px;
+  font-weight: 800;
+  font-size: 32px;
   line-height: 1.1;
-  margin: 4px 0 6px;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
 }
 
 .page-subtitle {
   color: var(--muted);
+  font-size: 16px;
   margin: 0;
+}
+
+.kicker {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 .grid {
@@ -126,34 +231,67 @@ button {
   grid-template-columns: 1fr 1fr;
 }
 
+.section-title {
+  font-weight: 700;
+  font-size: 19px;
+  margin: 10px 4px -4px;
+}
+
+.section-caption {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 4px;
+}
+
 /* ---- cards ------------------------------------------------------------ */
 
 .card {
   background: var(--card);
   border-radius: var(--radius);
-  padding: 16px;
-  border: 1px solid var(--line);
+  padding: 18px;
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .card-title {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 20px;
-  margin: 4px 0 2px;
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.25;
+  margin: 0 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .card-caption {
   color: var(--muted);
-  font-size: 14px;
-  margin: 0 0 12px;
+  font-size: 13px;
+  margin: 2px 0 14px;
 }
 
 .stat-value {
   font-family: var(--font-display);
-  font-size: 32px;
-  font-weight: 500;
+  font-size: 30px;
+  font-weight: 800;
   line-height: 1.1;
+  letter-spacing: -0.01em;
   margin-top: 6px;
+}
+
+.stat-value small {
+  font-size: 14px;
+  font-weight: 500;
+  margin-inline-start: 4px;
+  color: var(--muted);
 }
 
 .stat-sub {
@@ -161,9 +299,53 @@ button {
   font-size: 13px;
 }
 
+.delta {
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.delta.up {
+  color: var(--good);
+}
+
+.delta.down {
+  color: var(--bad);
+}
+
+/* The small stat tile: tinted icon circle, big number, label, change. */
+.stat-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-card .stat-label {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.icon-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-size: 20px;
+  color: var(--tone, var(--text));
+  background: color-mix(in srgb, var(--tone, var(--text)) 14%, var(--card));
+}
+
+.icon-circle.lg {
+  width: 52px;
+  height: 52px;
+  font-size: 24px;
+}
+
 .skeleton {
   background: var(--skeleton);
-  border-radius: 8px;
+  border-radius: 10px;
   animation: pulse 1.6s ease-in-out infinite;
 }
 
@@ -181,41 +363,166 @@ button {
 
 .soon {
   display: inline-block;
-  margin-top: 10px;
   font-size: 12px;
   color: var(--muted);
   border: 1px dashed var(--line);
   border-radius: 999px;
-  padding: 2px 10px;
+  padding: 3px 12px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--skeleton);
+  color: var(--text);
+}
+
+.pill.dark {
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* ---- the dark hero card ------------------------------------------------- */
+
+.hero-card {
+  position: relative;
+  border-radius: 24px;
+  padding: 20px 20px 0;
+  color: var(--hero-text);
+  background:
+    radial-gradient(90% 70% at 0% 0%, rgba(240, 123, 63, 0.2), transparent 60%),
+    var(--hero-bg);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+/* A faint track line in the corner - the mockup's photo, without a photo. */
+.hero-card::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: -40px;
+  top: -60px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 26px rgba(255, 255, 255, 0.025), 0 0 0 52px rgba(255, 255, 255, 0.02);
+  pointer-events: none;
+}
+
+.hero-kicker {
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hero-title {
+  font-size: 27px;
+  font-weight: 800;
+  line-height: 1.15;
+  margin: 6px 0 4px;
+}
+
+.hero-sub {
+  color: var(--hero-muted);
+  font-size: 15px;
+}
+
+.hero-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 4px;
+}
+
+.hero-progress .track {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.hero-progress .track > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--orange);
+  transition: width 0.8s ease;
+}
+
+.hero-progress .num {
+  font-size: 15px;
+  font-weight: 500;
+  min-width: 3ch;
+}
+
+.hero-stats {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  margin: 14px -20px 0;
+  border-top: 1px solid var(--hero-line);
+}
+
+.hero-stats > div {
+  text-align: center;
+  padding: 14px 4px 16px;
+  min-width: 0;
+}
+
+.hero-stats > div + div {
+  border-inline-start: 1px solid var(--hero-line);
+}
+
+.hero-stats .value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.hero-stats .label {
+  color: var(--hero-muted);
+  font-size: 12px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-stats .state {
+  font-size: 11px;
+  margin-top: 2px;
 }
 
 /* ---- range selector --------------------------------------------------- */
 
-.range {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
 .segmented {
-  flex: 1;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 3px;
+  border-radius: 999px;
+  padding: 5px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--card-border);
+  margin-bottom: 14px;
 }
 
 .segmented button {
   border: 0;
   background: transparent;
-  border-radius: 9px;
-  padding: 8px 0;
+  border-radius: 999px;
+  padding: 10px 0;
   font-weight: 500;
+  font-size: 15px;
   color: var(--muted);
   cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .segmented button[aria-pressed="true"] {
@@ -223,12 +530,30 @@ button {
   color: var(--bg);
 }
 
+.range-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.range-label {
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+}
+
 .arrow {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
+  border-radius: 50%;
+  border: 0;
   background: var(--card);
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -237,25 +562,19 @@ button {
   cursor: default;
 }
 
-.range-label {
-  font-size: 13px;
-  color: var(--muted);
-  margin: -8px 0 16px;
-}
-
 /* ---- history banner ---------------------------------------------------- */
 
 .banner {
   background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
   margin-bottom: 16px;
   font-size: 14px;
 }
 
 .bar {
-  height: 4px;
+  height: 6px;
   background: var(--skeleton);
   border-radius: 999px;
   margin-top: 8px;
@@ -288,7 +607,7 @@ button {
 .dot {
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: 50%;
   display: inline-block;
 }
 
@@ -300,11 +619,13 @@ button {
   bottom: 0;
   height: calc(var(--tabbar-height) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  z-index: 10;
+  z-index: 1000;
 }
 
 .tabbar button {
@@ -314,26 +635,15 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  font-size: 11px;
+  gap: 4px;
+  font-size: 12px;
   color: var(--muted);
   cursor: pointer;
 }
 
-.tabbar button .icon {
-  font-size: 20px;
-  filter: grayscale(1);
-  opacity: 0.7;
-}
-
 .tabbar button[aria-current="page"] {
   color: var(--text);
-  font-weight: 500;
-}
-
-.tabbar button[aria-current="page"] .icon {
-  filter: none;
-  opacity: 1;
+  font-weight: 700;
 }
 
 /* ---- full-screen states (loading, errors) ------------------------------- */
@@ -346,10 +656,15 @@ button {
   padding: 24px;
 }
 
+.center .brand {
+  display: block;
+  margin-bottom: 28px;
+}
+
 .center h1 {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 30px;
+  font-weight: 800;
+  font-size: 28px;
   margin: 0 0 8px;
 }
 
@@ -376,13 +691,39 @@ button {
   margin-top: 2px;
 }
 
+/* Two labelled numbers side by side, as in the mockup's heart-rate card. */
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+
+.pair .kicker {
+  font-size: 13px;
+}
+
+.pair .big {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+  unicode-bidi: plaintext;
+  text-align: right;
+}
+
+.pair .big small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .chart-notes {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
   font-size: 12px;
   color: var(--muted);
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .chart-notes span {
@@ -392,15 +733,21 @@ button {
 }
 
 .swatch {
-  width: 12px;
-  height: 8px;
-  border-radius: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
   display: inline-block;
 }
 
 .alert {
-  border-color: color-mix(in srgb, var(--zone-5) 45%, var(--line));
-  background: color-mix(in srgb, var(--zone-5) 8%, var(--card));
+  background: color-mix(in srgb, var(--zone-5) 7%, var(--card));
+  border-color: color-mix(in srgb, var(--zone-5) 30%, var(--line));
+}
+
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .progress {
@@ -408,7 +755,7 @@ button {
   background: var(--skeleton);
   border-radius: 999px;
   overflow: hidden;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .progress > span {
@@ -427,53 +774,108 @@ button {
 .list li {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
-  padding: 10px 0;
+  padding: 12px 0;
   border-top: 1px solid var(--line);
 }
 
 .list li:first-child {
   border-top: 0;
+  padding-top: 4px;
 }
 
-.week-grid {
+.list .row-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.list .icon-circle {
+  width: 38px;
+  height: 38px;
+  font-size: 17px;
+}
+
+/* ---- the current week: one circle per day -------------------------------- */
+
+.week-row {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
-}
-
-.week-day {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  min-height: 86px;
-  padding: 6px 4px;
+  gap: 4px;
   text-align: center;
-  font-size: 11px;
 }
 
-.week-day.today {
+.week-circle {
+  width: 38px;
+  height: 38px;
+  margin: 0 auto 6px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--line);
+  color: var(--bg);
+  font-size: 15px;
+}
+
+.week-circle.done {
+  background: var(--text);
   border-color: var(--text);
 }
 
-.chip {
-  display: block;
-  border-radius: 6px;
-  padding: 3px 2px;
-  margin-top: 4px;
-  font-size: 10px;
-  line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.week-circle.planned {
+  border: 1.5px dashed var(--muted);
+  color: var(--muted);
 }
 
-.chip.planned {
-  border: 1px dashed currentColor;
+.week-circle.today {
+  border: 2.5px solid var(--skeleton);
+  border-top-color: var(--orange);
+  border-inline-start-color: var(--orange);
+  color: var(--orange);
 }
 
-.chip.done {
+.week-circle.today.done {
+  border-color: var(--orange);
+  background: var(--orange);
   color: #fff;
+}
+
+.week-day-name {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.week-day-name.today {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.week-sports {
+  font-size: 11px;
+  min-height: 15px;
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+/* ---- next workout (today, goals) ----------------------------------------- */
+
+.inner-box {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+}
+
+.workout-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.workout-name {
+  font-weight: 700;
+  font-size: 17px;
 }
 
 .blocks {
@@ -481,18 +883,27 @@ button {
   gap: 2px;
   height: 34px;
   align-items: flex-end;
-  margin-top: 10px;
+  margin-top: 14px;
 }
 
 .blocks span {
-  border-radius: 3px;
+  border-radius: 4px;
   min-width: 3px;
 }
 
-.split-bar {
+.sport-split {
   display: flex;
-  height: 12px;
+  height: 10px;
   border-radius: 999px;
   overflow: hidden;
   margin: 8px 0 6px;
+  gap: 2px;
+}
+
+.sport-split > span:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.sport-split > span:last-child {
+  border-radius: 0 999px 999px 0;
 }
