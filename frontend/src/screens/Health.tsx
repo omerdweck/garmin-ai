@@ -54,13 +54,14 @@ function MetricCard({ data, meta, start, end, year }: {
           <div className="stat-value num" style={{ color: meta.color }}>
             {lastWeek === null ? "—" : lastWeek.toFixed(meta.digits ?? 0)}
           </div>
-          <div className="stat-sub">{meta.unit}</div>
+          {/* "/100" and "/דק׳" read left to right; inside Hebrew they'd flip to "100/". */}
+          <div className="stat-sub"><bdi dir="ltr">{meta.unit}</bdi></div>
         </div>
       </div>
       <Chart build={build} height={130} />
       <div className="chart-notes">
         {data.band && (
-          <span><i className="swatch" style={{ background: meta.color, opacity: 0.25 }} />הנורמה שלך ({data.band.low}–{data.band.high})</span>
+          <span><i className="swatch" style={{ background: meta.color, opacity: 0.25 }} />הנורמה שלך <bdi dir="ltr" className="num">{data.band.low}–{data.band.high}</bdi></span>
         )}
         {data.alerts.length > 0 && <span><i className="swatch" style={{ background: "var(--zone-5)", opacity: 0.3 }} />התראה מהמאמן</span>}
       </div>
