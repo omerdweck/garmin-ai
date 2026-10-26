@@ -2,8 +2,6 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { authenticate, NotMemberError } from "./api";
 import { TabBar, type Tab } from "./components/TabBar";
 import { RangeProvider } from "./range";
-import { Goals } from "./screens/Goals";
-import { Health } from "./screens/Health";
 import { Records } from "./screens/Records";
 import { Today } from "./screens/Today";
 import { tg } from "./telegram";
@@ -11,6 +9,8 @@ import { tg } from "./telegram";
 // The charts library is most of the download (~280 KB). Loaded only when a
 // tab with charts opens, so the home tab appears at once on a slow phone.
 const Workouts = lazy(() => import("./screens/Workouts").then((m) => ({ default: m.Workouts })));
+const Health = lazy(() => import("./screens/Health").then((m) => ({ default: m.Health })));
+const Goals = lazy(() => import("./screens/Goals").then((m) => ({ default: m.Goals })));
 
 type Session =
   | { state: "loading" }
@@ -95,13 +95,11 @@ export function App() {
     <RangeProvider>
       <main className="app">
         {tab === "today" && <Today name={session.name} />}
-        {tab === "workouts" && (
-          <Suspense fallback={<div className="skeleton" style={{ height: 240, marginTop: 120 }} />}>
-            <Workouts />
-          </Suspense>
-        )}
-        {tab === "health" && <Health />}
-        {tab === "goals" && <Goals />}
+        <Suspense fallback={<div className="skeleton" style={{ height: 240, marginTop: 120 }} />}>
+          {tab === "workouts" && <Workouts />}
+          {tab === "health" && <Health />}
+          {tab === "goals" && <Goals />}
+        </Suspense>
         {tab === "records" && <Records />}
       </main>
       <TabBar active={tab} onChange={setTab} />

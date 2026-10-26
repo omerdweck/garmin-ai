@@ -4,11 +4,12 @@
  * A chart type or component used anywhere must be registered here.
  */
 
-import { BarChart, HeatmapChart, LineChart } from "echarts/charts";
+import { BarChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
 import {
   CalendarComponent,
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
   MarkLineComponent,
   TooltipComponent,
   VisualMapComponent,
@@ -20,10 +21,12 @@ echarts.use([
   BarChart,
   LineChart,
   HeatmapChart,
+  ScatterChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,
+  MarkAreaComponent,
   CalendarComponent,
   VisualMapComponent,
   CanvasRenderer,
