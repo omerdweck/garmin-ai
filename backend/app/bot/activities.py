@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 from app.db.session import engine
-from app.models.activity import Activity
+from app.models.activity import SOURCE_MANUAL, Activity
 # Aliased: activity_view exports a type_label too, and a bare import of both
 # silently left whichever came last in force.
 from app.services.records import format_records
@@ -147,6 +147,7 @@ async def on_activity_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_text("האימון לא נמצא 🤔")
             return
         activity_type = activity.activity_type
+        is_manual = activity.source == SOURCE_MANUAL
         needs_sets = activity_type == "strength_training" and activity.exercise_sets is None
 
     if needs_sets:
@@ -163,9 +164,11 @@ async def on_activity_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         with Session(engine) as session:
             text = format_activity_detail(session.get(Activity, activity_id))
 
-    back = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("⬅️ חזרה", callback_data=f"acttype:{activity_type}")]]
-    )
+    rows = [[InlineKeyboardButton("⬅️ חזרה", callback_data=f"acttype:{activity_type}")]]
+    if is_manual:
+        # Only manual workouts: a Garmin one would come straight back on the next sync.
+        rows.insert(0, [InlineKeyboardButton("🗑 מחיקת האימון", callback_data=f"manual:del:{activity_id}")])
+    back = InlineKeyboardMarkup(rows)
     try:
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
     except BadRequest:

@@ -1,15 +1,17 @@
 """
-Adding a workout by hand, step by step.
+"➕ הוספת אימון": first a choice between a workout already done and one to
+do later, then either the manual entry below or the workout builder.
 
-Moved verbatim from the former single-file app/bot.py.
+Also the delete of a manually entered workout - from the message that saved
+it, and from the workout's page under "🏃 האימונים שלי".
 """
 import logging
+from datetime import timedelta
 
 from sqlmodel import Session
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardRemove,
     Update,
 )
 from telegram.ext import (
@@ -17,7 +19,11 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from app.core import clock
+from app.core.config import settings
 from app.db.session import engine
+from app.models.activity import SOURCE_MANUAL, Activity
+from app.services.activity_view import summary_line
 from app.services.manual_activity import (
     DISTANCE_CHOICES_KM,
     DURATION_CHOICES,
@@ -25,6 +31,7 @@ from app.services.manual_activity import (
     SWIM_CHOICES_M,
     build_start_time,
     create_manual_activity,
+    delete_manual_activity,
     parse_distance,
     parse_duration,
     takes_distance,
@@ -34,7 +41,8 @@ from app.services.manual_activity import (
 from app.services.manual_activity import type_label as manual_type_label
 from app.bot.calories import CALORIE_KEY, _handle_calorie_text
 from app.bot.common import MAIN_KEYBOARD, MENU_BUTTONS, _find_user, _require_active
-from app.bot.workouts import BUILDER_KEY, handle_builder_text
+from app.bot.workouts import BUILDER_KEY, encode_day, handle_builder_text
+from app.services.plan_view import day_label
 
 logger = logging.getLogger(__name__)
 
@@ -43,29 +51,54 @@ logger = logging.getLogger(__name__)
 MANUAL_KEY = "manual_activity"
 
 
+# How far ahead "📅 to do later" offers days directly. The weekly schedule
+# goes further; a week covers "later today" and "on Thursday".
+FUTURE_DAYS = 7
+
+
 async def add_activity_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Opens manual entry, leading with when NOT to use it.
+    Asks first what kind of "add": a workout already done, or one to do later.
 
-    The warning is the first thing shown rather than a footnote: a workout
-    the watch already recorded will arrive from Garmin on the next sync, and
-    the result is the same session stored twice. Nothing merges them, so the
-    cheapest place to prevent that is before the first tap.
+    Both used to be one path, so a workout planned for this evening was
+    stored as done - in the history, the weekly totals and the load - instead
+    of becoming something to put on the watch.
     """
     user_id = await _require_active(update)
     if user_id is None:
         return
 
-    context.user_data[MANUAL_KEY] = {}
+    context.user_data.pop(MANUAL_KEY, None)
     await update.message.reply_text(
-        "➕ *הוספת אימון ידנית*\n\n"
+        "➕ *הוספת אימון*\n\nמה תרצה להוסיף?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("✅ אימון שכבר עשיתי", callback_data="manual:past")],
+                [InlineKeyboardButton("📅 אימון לעשות בהמשך", callback_data="manual:future")],
+                [InlineKeyboardButton("ביטול", callback_data="manual:abort")],
+            ]
+        ),
+    )
+
+
+async def _start_past(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Manual entry, leading with when NOT to use it.
+
+    The warning comes first rather than as a footnote: a workout the watch
+    already recorded arrives from Garmin on the next sync, and entering it
+    by hand too stores the same session twice. Nothing merges them.
+    """
+    context.user_data[MANUAL_KEY] = {}
+    await query.edit_message_text(
+        "✅ *אימון שכבר עשיתי*\n\n"
         "⚠️ השתמש בזה *רק לאימון שהשעון לא הקליט* - בלי שעון, או שכחת להתחיל הקלטה.\n\n"
         "אימון שהשעון כן מדד יגיע אלינו לבד בסנכרון הבא, והוספה ידנית שלו "
         "תיצור אותו אימון פעמיים.",
         parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove(),
     )
-    await update.effective_chat.send_message(
+    await query.message.chat.send_message(
         "איזה סוג אימון?",
         reply_markup=InlineKeyboardMarkup(
             [
@@ -74,6 +107,72 @@ async def add_activity_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ]
             + [[InlineKeyboardButton("ביטול", callback_data="manual:abort")]]
         ),
+    )
+
+
+async def _start_future(query) -> None:
+    """
+    A workout to do later goes to the workout builder, for a chosen day:
+    the coach builds it, and from there it can go to the watch. The day
+    buttons hand over to the builder's own "wkb:home:<day>" step, so this
+    adds no second way of building workouts.
+    """
+    if not settings.is_claude_configured:
+        await query.edit_message_text("🤖 המאמן החכם לא מחובר כרגע, ולכן אי אפשר לבנות אימון עתידי.")
+        return
+    today = clock.today()
+    days = [today + timedelta(days=i) for i in range(FUTURE_DAYS)]
+    buttons = [InlineKeyboardButton(day_label(d, today), callback_data=f"wkb:home:{encode_day(d)}") for d in days]
+    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
+    await query.edit_message_text(
+        "📅 *אימון לעשות בהמשך*\n\n"
+        "לאיזה יום? אחרי שהמאמן יבנה אותו, תוכל לשלוח אותו לשעון.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+def delete_keyboard(activity_id: int) -> InlineKeyboardMarkup:
+    """The 🗑 button under a manual workout. Opens a confirmation, never deletes on one tap."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🗑 מחיקת האימון", callback_data=f"manual:del:{activity_id}")]])
+
+
+async def _on_delete(query, step: str, activity_id: int) -> None:
+    with Session(engine) as session:
+        user = _find_user(session, query.message.chat_id)
+        activity = session.get(Activity, activity_id)
+        # Callback data comes from the client: ownership and source are
+        # checked here (and again inside delete_manual_activity).
+        if user is None or activity is None or activity.user_id != user.id or activity.source != SOURCE_MANUAL:
+            await query.edit_message_text("האימון לא נמצא 🤔 אולי כבר נמחק.")
+            return
+        label = f"{manual_type_label(activity.activity_type)} · {summary_line(activity)}"
+
+        if step == "del":
+            await query.edit_message_text(
+                f"למחוק את האימון הזה?\n\n*{label}*\n\n_אי אפשר לבטל מחיקה._",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton("🗑 כן, למחוק", callback_data=f"manual:delok:{activity_id}"),
+                        InlineKeyboardButton("השאר", callback_data=f"manual:keep:{activity_id}"),
+                    ]]
+                ),
+            )
+            return
+
+        if step == "keep":
+            await query.edit_message_text(f"👍 האימון נשאר\n\n*{label}*", parse_mode="Markdown",
+                                          reply_markup=delete_keyboard(activity_id))
+            return
+
+        delete_manual_activity(session, user.id, activity_id)
+    logger.info("Manual activity %s deleted by chat %s", activity_id, query.message.chat_id)
+    await query.edit_message_text(
+        f"🗑 *נמחק*\n\n{label}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ לאימונים שלי", callback_data="acttype_menu")]]),
     )
 
 
@@ -88,6 +187,18 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
     parts = query.data.split(":")
     step = parts[1]
+
+    if step == "past":
+        await _start_past(query, context)
+        return
+    if step == "future":
+        context.user_data.pop(MANUAL_KEY, None)
+        await _start_future(query)
+        return
+    if step in ("del", "delok", "keep") and len(parts) == 3 and parts[2].isdigit():
+        await _on_delete(query, step, int(parts[2]))
+        return
+
     draft = context.user_data.setdefault(MANUAL_KEY, {})
 
     if step == "abort":
@@ -176,7 +287,7 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if user is None:
                 await query.edit_message_text("לא נמצא משתמש.")
                 return
-            create_manual_activity(
+            saved = create_manual_activity(
                 session,
                 user_id=user.id,
                 activity_type=draft["type"],
@@ -185,9 +296,14 @@ async def on_manual_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 distance_meters=draft.get("distance_m"),
             )
             summary = _manual_summary(draft)
+            saved_id = saved.id
 
         context.user_data.pop(MANUAL_KEY, None)
-        await query.edit_message_text(f"✅ *נשמר*\n\n{summary}", parse_mode="Markdown")
+        # The delete button stays under the saved message: the most likely
+        # moment to notice a mistake is right after saving it.
+        await query.edit_message_text(
+            f"✅ *נשמר*\n\n{summary}", parse_mode="Markdown", reply_markup=delete_keyboard(saved_id)
+        )
         await query.message.chat.send_message(
             "האימון נוסף לרשימת האימונים שלך 💪\n\n"
             "_שים לב: מדדי העומס של גרמין לא כוללים אימונים שהוזנו ידנית._",
