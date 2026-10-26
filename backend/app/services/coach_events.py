@@ -4,7 +4,8 @@ The pipeline every unprompted coach message goes through.
     record_event()  - something happened (a workout synced, a metric drifted).
                       Stores it once; recording the same event again is a no-op.
     deliver()       - decides whether it should be sent, writes the message,
-                      sends it, and files it in the chat history.
+                      sends it, and files it in the chat history and on the
+                      Mini App's notifications screen.
 
 Splitting the two is what keeps the rest of the code simple: the sync only
 has to say "this workout is new", and every rule about *whether* the user
@@ -39,6 +40,7 @@ from app.models.coach_event import (
 )
 from app.models.user import User
 from app.services.account_lifecycle import AccountState, resolve_state
+from app.services import notifications
 from app.services.ai_budget import budget_exhausted
 
 logger = logging.getLogger(__name__)
@@ -200,6 +202,13 @@ def deliver(session: Session, event_id: int) -> str:
     # Into the history as the coach's own words, so "why?" right after it
     # is answered by a coach that knows what it just said.
     session.add(ChatMessage(user_id=user.id, role="assistant", content=text))
+    # And onto the Mini App's notifications screen, in the same commit as the
+    # status: a notification for a message that was never marked sent would
+    # be followed by a second one when the retry sends it again.
+    notifications.record(
+        session, user.id, event.kind, text,
+        notifications.source_key_for_event(event.id), notifications.link_for_event(session, event),
+    )
     event.status = STATUS_SENT
     event.sent_at = datetime.now(timezone.utc)
     session.add(event)
