@@ -41,7 +41,7 @@ from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
 from app.models.history_import import HistoryImport
 from app.models.user import User
-from app.services import activity_page, dashboard_stats, workout_stats
+from app.services import activity_page, dashboard_stats, notifications, workout_stats
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
 
@@ -228,3 +228,45 @@ def activity(
     if page["status"] == "missing":
         page["status"] = activity_page.request_detail(activity_id)
     return page
+
+
+# --- notifications (the bell) ----------------------------------------------------
+# Everything the bot sent without being asked (app/services/notifications.py).
+# Mark-as-read is the one write this API makes, and its role may change
+# nothing but notification.read_at.
+
+
+@router.get("/notifications")
+def notification_list(
+    before: Optional[int] = Query(None, ge=1), limit: int = Query(20, ge=1, le=50),
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    result = notifications.page(session, user_id, before, limit)
+    # The first page is where an empty screen would be seen; asking there is
+    # what lazily fills in messages from before the table existed.
+    result["backfilling"] = notifications.request_backfill(user_id) if before is None else False
+    return result
+
+
+@router.get("/notifications/unread")
+def notification_unread(
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    # Also asked here: the bell polls this from the moment the app opens, so
+    # the backfill has usually finished before anyone taps it.
+    notifications.request_backfill(user_id)
+    return {"unread": notifications.unread_count(session, user_id)}
+
+
+class MarkRead(BaseModel):
+    ids: list[int] = []
+    all: bool = False
+
+
+@router.post("/notifications/read")
+def notification_mark_read(
+    body: MarkRead, user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    if len(body.ids) > 200:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="too many ids")
+    return {"unread": notifications.mark_read(session, user_id, body.ids, everything=body.all)}
