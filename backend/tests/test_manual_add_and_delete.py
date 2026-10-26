@@ -62,7 +62,11 @@ def test_future_hands_over_to_the_builder_for_a_day(make_user, monkeypatch):
     monkeypatch.setattr(bot.settings, "anthropic_api_key", "sk-test")
     user = make_user()
     query, _, context = _press(user, "manual:future", {bot.MANUAL_KEY: {"type": "running"}})
-    days = [b for b in _buttons(query.edit_message_text.call_args.kwargs["reply_markup"]) if b.callback_data.startswith("wkb:home:")]
+    # Dated days only; "wkb:home:0" is the "no day yet" button, tested on its own.
+    days = [
+        b for b in _buttons(query.edit_message_text.call_args.kwargs["reply_markup"])
+        if b.callback_data.startswith("wkb:home:") and b.callback_data != "wkb:home:0"
+    ]
     assert len(days) == bot.FUTURE_DAYS
     assert days[0].text == "היום" and days[1].text == "מחר"
     assert bot.MANUAL_KEY not in context.user_data  # nothing half-entered is left behind
