@@ -33,9 +33,9 @@ export async function authenticate(): Promise<AuthResult> {
   return { first_name: body.first_name, garmin_linked: body.garmin_linked };
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, method: "GET" | "POST" = "GET"): Promise<T> {
   const send = () =>
-    fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    fetch(path, { method, headers: token ? { Authorization: `Bearer ${token}` } : {} });
 
   let res = await send();
   if (res.status === 401 && tg) {
@@ -46,4 +46,9 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (res.status === 403) throw new NotMemberError();
   if (!res.ok) throw new Error(`${path}: ${res.status}`);
   return (await res.json()) as T;
+}
+
+/** The same, as a POST without a body - for the few actions the page can start (POST /api/sync). */
+export function apiPost<T>(path: string): Promise<T> {
+  return apiGet<T>(path, "POST");
 }
