@@ -1,0 +1,431 @@
+/*
+ * The single-workout page, after Omer's mockup: a title row, a dark summary
+ * card with four big numbers and the map, a pill tab bar, and white cards
+ * per metric. Uses the page tokens from theme.css (--bg, --card, --text,
+ * --muted, --line) so it follows light/dark like everything else; the hero
+ * card is dark in both themes on purpose.
+ */
+
+.act-page {
+  min-height: 100vh;
+  padding: calc(12px + var(--safe-top, 0px)) 16px calc(var(--safe-bottom, 0px) + 32px);
+  max-width: 560px;
+  margin: 0 auto;
+  font-family: var(--font-body);
+}
+
+.act-top {
+  text-align: center;
+  margin: 4px 0 14px;
+}
+
+.act-top h1 {
+  font-family: var(--font-body);
+  font-size: 19px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.act-date {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* ---- the dark summary card ---------------------------------------------- */
+
+.hero {
+  border-radius: 24px;
+  padding: 18px 18px 14px;
+  color: #f5f3ef;
+  background:
+    radial-gradient(120% 80% at 100% 0%, rgba(240, 123, 63, 0.18), transparent 60%),
+    linear-gradient(180deg, #1f2023 0%, #2a2b2f 100%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.hero-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hero-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  flex: none;
+}
+
+.hero-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.hero-sub {
+  color: rgba(245, 243, 239, 0.65);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 18px 0 10px;
+}
+
+.hero-stat {
+  padding: 8px 4px;
+}
+
+/* The divider between the two columns: on the first column's inner edge. */
+.hero-stat:nth-child(odd) {
+  border-inline-end: 1px solid rgba(255, 255, 255, 0.14);
+  padding-inline-end: 16px;
+}
+
+.hero-stat:nth-child(even) {
+  padding-inline-start: 16px;
+}
+
+.hero-value {
+  direction: ltr;
+  text-align: right;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.hero-value small {
+  font-size: 15px;
+  font-weight: 500;
+  margin-inline-start: 4px;
+  opacity: 0.85;
+}
+
+.hero-label {
+  color: rgba(245, 243, 239, 0.62);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.hero-map {
+  position: relative;
+  margin: 10px -18px -14px;
+}
+
+.route-map {
+  width: 100%;
+  background: #262729;
+  transition: height 0.2s ease;
+}
+
+.route-map .leaflet-control-attribution {
+  font-size: 9px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #bbb;
+}
+
+.route-map .leaflet-control-attribution a {
+  color: #ddd;
+}
+
+.map-expand {
+  position: absolute;
+  inset-inline-start: 12px;
+  bottom: 14px;
+  z-index: 500;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(30, 30, 32, 0.85);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+/* ---- pill tabs -------------------------------------------------------------- */
+
+.act-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 4px;
+  margin: 16px 0 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.act-tabs button {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 9px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.act-tabs button[aria-selected="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* ---- cards ---------------------------------------------------------------- */
+
+.act-card {
+  background: var(--card);
+  border-radius: 20px;
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 6px 18px rgba(0, 0, 0, 0.04);
+}
+
+.act-card-head h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.act-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 6px;
+}
+
+.act-small {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+/* A value with its unit: "146 bpm" reads left to right, "61 מ׳" right to
+   left - plaintext lets each pick its own direction instead of flipping. */
+.act-big,
+.act-value {
+  unicode-bidi: plaintext;
+  text-align: right;
+}
+
+.act-big {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.act-value {
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.act-caption {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 4px 0 8px;
+}
+
+.act-muted {
+  color: var(--muted);
+}
+
+.act-empty {
+  color: var(--muted);
+  text-align: center;
+  margin: 18px 8px;
+}
+
+.act-loading p {
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.act-loading {
+  margin-top: 14px;
+}
+
+.act-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.act-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.act-list li:first-child {
+  border-top: 0;
+}
+
+/* ---- splits ------------------------------------------------------------------ */
+
+.splits {
+  display: grid;
+  gap: 6px;
+}
+
+.split-row {
+  display: grid;
+  grid-template-columns: 2.4em 3.6em 1fr 2.6em;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.split-head {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.split-bar {
+  height: 12px;
+  background: var(--skeleton);
+  border-radius: 999px;
+  overflow: hidden;
+  direction: rtl;
+}
+
+.split-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+/* ---- zones ------------------------------------------------------------------- */
+
+.zone-row {
+  display: grid;
+  grid-template-columns: 5.2em 1fr 3.6em;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.zone-name small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.zone-bar {
+  height: 14px;
+  background: var(--skeleton);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.zone-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.zone-time {
+  text-align: left;
+}
+
+/* ---- strength sets ------------------------------------------------------------ */
+
+.sets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sets li {
+  display: grid;
+  grid-template-columns: 1.8em 1fr auto;
+  gap: 8px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.sets li:first-child {
+  border-top: 0;
+}
+
+.set-n {
+  color: var(--muted);
+}
+
+.set-name small {
+  color: var(--muted);
+}
+
+/* ---- the list on the workouts tab --------------------------------------------- */
+
+.activity-list li {
+  padding: 0;
+}
+
+.activity-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 40px 1fr auto 14px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.activity-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+}
+
+.activity-text,
+.activity-numbers {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.activity-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-numbers {
+  text-align: left;
+  font-size: 14px;
+}
+
+.chevron {
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.more {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+}

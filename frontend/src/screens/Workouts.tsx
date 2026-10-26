@@ -9,6 +9,7 @@ import {
   type HoursBucket,
   type LoadDay,
 } from "../charts/workoutCharts";
+import { ActivityList } from "../components/ActivityList";
 import { HistoryBanner } from "../components/HistoryBanner";
 import { RangeSelector } from "../components/RangeSelector";
 import { Card, ChartPlaceholder, PageHeader, Stat } from "../components/ui";
@@ -125,6 +126,8 @@ export function Workouts() {
         <Card title="Form" caption={`Fitness פחות Fatigue. מתחת לאפס: סופגים עבודה. אדום: מעבר לקו ה-30-, אזור סיכון.${loadSpan}`}>
           {days ? days.length ? <Chart build={buildForm} height={160} /> : null : <ChartPlaceholder height={160} />}
         </Card>
+
+        <ActivityList />
 
         <CalendarCard />
 

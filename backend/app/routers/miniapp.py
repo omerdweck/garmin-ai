@@ -41,7 +41,7 @@ from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
 from app.models.history_import import HistoryImport
 from app.models.user import User
-from app.services import dashboard_stats, workout_stats
+from app.services import activity_page, dashboard_stats, workout_stats
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
 
@@ -204,3 +204,27 @@ def goals(user_id: int = Depends(get_miniapp_user_id), session: Session = Depend
 @router.get("/records")
 def records(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
     return dashboard_stats.records(session, user_id, clock.today())
+
+
+# --- single workouts -------------------------------------------------------------
+
+
+@router.get("/activities")
+def activities(
+    before: Optional[int] = Query(None, ge=1), limit: int = Query(30, ge=1, le=100),
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    return activity_page.recent(session, user_id, before, limit)
+
+
+@router.get("/activities/{activity_id}")
+def activity(
+    activity_id: int, user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    page = activity_page.page(session, user_id, activity_id)
+    if page is None:
+        # Not "forbidden": someone else's workout simply doesn't exist for this user.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    if page["status"] == "missing":
+        page["status"] = activity_page.request_detail(activity_id)
+    return page

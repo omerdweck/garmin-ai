@@ -183,3 +183,28 @@ def test_every_settings_toggle_maps_to_a_real_column_that_starts_on(make_user):
     for column, _label in NOTIFY_OPTIONS.values():
         assert getattr(me, column) is True
     assert {c for c, _ in NOTIFY_OPTIONS.values()} == set(ce.PREFERENCE_FOR_KIND.values())
+
+
+# --- the "📊 לניתוח המלא" button under a post-workout message -----------------
+
+
+def test_post_workout_message_links_to_its_workout_page(monkeypatch):
+    monkeypatch.setattr(ce.settings, "miniapp_url", "https://garmin-ai.duckdns.org")
+    event = CoachEvent(user_id=1, kind=KIND_POST_WORKOUT, key="post_workout:9", payload={"activity_id": 42})
+    rows = ce.keyboard_for(event).inline_keyboard
+    assert rows[0][0].web_app.url == "https://garmin-ai.duckdns.org/?activity=42"
+    assert rows[1][0].callback_data == ce.TALK_CALLBACK  # "💬 לדבר על זה" still there
+
+
+@pytest.mark.parametrize(
+    "url, kind, payload",
+    [
+        ("", KIND_POST_WORKOUT, {"activity_id": 42}),            # no Mini App configured
+        ("https://x.example", KIND_ANOMALY, {"activity_id": 42}),  # not a workout message
+        ("https://x.example", KIND_POST_WORKOUT, {}),             # no workout to open
+    ],
+)
+def test_no_workout_button_when_it_cannot_work(monkeypatch, url, kind, payload):
+    monkeypatch.setattr(ce.settings, "miniapp_url", url)
+    event = CoachEvent(user_id=1, kind=kind, key="k", payload=payload)
+    assert ce.keyboard_for(event) is ce.TALK_KEYBOARD

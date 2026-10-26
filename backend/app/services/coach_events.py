@@ -23,9 +23,10 @@ from typing import Callable, Optional
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, select
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.core import clock
+from app.core.config import settings
 from app.core.telegram_client import send_telegram_message
 from app.models.chat_message import ChatMessage
 from app.models.coach_event import (
@@ -130,6 +131,23 @@ def _already_sent_today(session: Session, user_id: int, kind: str, exclude_id: i
     return any(stamp is not None and clock.utc_to_local_date(stamp) == today for stamp in sent)
 
 
+def keyboard_for(event: CoachEvent) -> InlineKeyboardMarkup:
+    """
+    "💬 לדבר על זה" under every coach message. A post-workout message also
+    gets "📊 לניתוח המלא", opening the Mini App straight on that workout's
+    page (map, charts, splits) - the moment someone most wants to see it.
+    Left out until the Mini App has a URL.
+    """
+    activity_id = (event.payload or {}).get("activity_id")
+    if event.kind != KIND_POST_WORKOUT or not settings.miniapp_url or not activity_id:
+        return TALK_KEYBOARD
+    url = f"{settings.miniapp_url.rstrip('/')}/?activity={int(activity_id)}"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 לניתוח המלא", web_app=WebAppInfo(url=url))],
+        *TALK_KEYBOARD.inline_keyboard,
+    ])
+
+
 def deliver(session: Session, event_id: int) -> str:
     """
     Send one recorded event, or record why not. Returns a short outcome
@@ -177,7 +195,7 @@ def deliver(session: Session, event_id: int) -> str:
     # Sent before marking: a send that fails leaves the event pending so the
     # task's retry can try again. The lock above keeps that retry from
     # overlapping a send that is still in progress.
-    send_telegram_message(user.telegram_chat_id, text, reply_markup=TALK_KEYBOARD)
+    send_telegram_message(user.telegram_chat_id, text, reply_markup=keyboard_for(event))
 
     # Into the history as the coach's own words, so "why?" right after it
     # is answered by a coach that knows what it just said.

@@ -39,6 +39,9 @@ __all__ = [
     "get_activities",
     "get_activities_between",
     "get_exercise_sets",
+    "get_activity_streams",
+    "get_activity_laps",
+    "get_activity_hr_zones",
     "get_watch_last_upload",
     "get_training_load",
     "get_race_predictions",
@@ -306,6 +309,25 @@ def get_exercise_sets(session: Garmin, activity_id: int) -> dict:
     other activity types return an empty set list.
     """
     return session.get_activity_exercise_sets(activity_id)
+
+
+def get_activity_streams(session: Garmin, activity_id: int) -> dict:
+    """
+    One workout second by second: Garmin's chart metrics (time, distance,
+    heart rate, speed, elevation, cadence, power...) and the GPS polyline.
+    Capped by Garmin at 2,000 chart points and 4,000 map points.
+    """
+    return session.get_activity_details(activity_id, maxchart=2000, maxpoly=4000)
+
+
+def get_activity_laps(session: Garmin, activity_id: int) -> dict:
+    """Laps (lapDTOs) - and for pool swims, every length inside each lap."""
+    return session.get_activity_splits(activity_id)
+
+
+def get_activity_hr_zones(session: Garmin, activity_id: int) -> list:
+    """Seconds in each heart-rate zone, with the zone's lower bound."""
+    return session.get_activity_hr_in_timezones(activity_id)
 
 
 # --------------------------------------------------------------------------

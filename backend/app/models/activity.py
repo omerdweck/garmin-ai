@@ -66,4 +66,12 @@ class Activity(SQLModel, table=True):
     # since a finished workout's sets never change.
     exercise_sets: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
 
+    # The workout second by second, processed into what the Mini App's
+    # workout page draws (see app/services/activity_detail.py): downsampled
+    # charts, the GPS track with the ends trimmed for privacy, km splits,
+    # heart-rate zones. Fetched once per workout - a finished workout never
+    # changes - right after a sync finds it, or the first time it's opened.
+    detail: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
+    detail_fetched_at: Optional[datetime] = None
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
