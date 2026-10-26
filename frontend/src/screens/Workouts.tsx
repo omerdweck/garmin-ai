@@ -98,6 +98,8 @@ export function Workouts() {
   const buildFitness = useCallback((p: Palette) => fitnessFatigue(p, days ?? []), [days]);
   const buildForm = useCallback((p: Palette) => form(p, days ?? []), [days]);
 
+  // The API widens the week's load charts to six weeks (a week is too short for a trend).
+  const loadSpan = range.kind === "week" ? " מוצג: 6 השבועות האחרונים." : "";
   const hoursTitle = summary.data?.bucket === "week" ? "שעות בשבוע, לפי ענף" : "שעות ביום, לפי ענף";
 
   return (
@@ -112,7 +114,7 @@ export function Workouts() {
           {hours ? <Chart build={buildHours} height={230} /> : <ChartPlaceholder height={230} />}
         </Card>
 
-        <Card title="Fitness מול Fatigue" caption="Fitness נבנה לאט, לאורך כ-6 שבועות. Fatigue הוא השבוע האחרון, וקופץ מהר.">
+        <Card title="Fitness מול Fatigue" caption={`Fitness נבנה לאט, לאורך כ-6 שבועות. Fatigue הוא השבוע האחרון, וקופץ מהר.${loadSpan}`}>
           {days ? (
             days.length ? <Chart build={buildFitness} height={220} /> : <p className="stat-sub">אין עדיין אימונים עם עומס.</p>
           ) : (
@@ -120,7 +122,7 @@ export function Workouts() {
           )}
         </Card>
 
-        <Card title="Form" caption="Fitness פחות Fatigue. מתחת לאפס: סופגים עבודה. אדום: מעבר לקו ה-30-, אזור סיכון.">
+        <Card title="Form" caption={`Fitness פחות Fatigue. מתחת לאפס: סופגים עבודה. אדום: מעבר לקו ה-30-, אזור סיכון.${loadSpan}`}>
           {days ? days.length ? <Chart build={buildForm} height={160} /> : null : <ChartPlaceholder height={160} />}
         </Card>
 

@@ -38,6 +38,9 @@ SPORT_KEYS = ["running", "cycling", "swimming", "strength", "walking", "other"]
 FITNESS_DAYS = 42
 FATIGUE_DAYS = 7
 
+# How far back the week view's load charts reach (six weeks).
+CONTEXT_DAYS = 42
+
 
 def dashboard_sport(activity_type: Optional[str]) -> str:
     for family, types in DASHBOARD_FAMILIES.items():
@@ -184,6 +187,10 @@ def load_series(session: Session, user_id: int, kind: str, offset: int, today: d
     """
     start, end = period_for(kind, offset, today)
     end = min(end, today)  # the future has no load
+    # A week is two to seven points - too few for a trend line to say
+    # anything. The week view shows the six weeks ending with it instead.
+    if kind == "week":
+        start = min(start, end - timedelta(days=CONTEXT_DAYS - 1))
     first, load = _daily_load(session, user_id, end)
     days = []
     if first is not None and first <= end:

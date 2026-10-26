@@ -130,9 +130,24 @@ def test_load_runs_from_the_first_workout_not_the_period_start(client, make_user
     run(make_activity, user, date(2026, 9, 1), load=200)  # before this week
     body = client.get("/api/load?kind=week", headers=headers(user)).json()
     days = body["days"]
-    assert [d["date"] for d in days] == ["2026-10-25", "2026-10-26"]  # nothing in the future
+    assert days[-1]["date"] == "2026-10-26"  # nothing in the future
     assert days[0]["fitness"] > 0  # remembered from September
     assert days[0]["load"] == 0
+
+
+def test_week_load_shows_six_weeks_of_context(client, make_user, make_activity):
+    user = make_user()
+    run(make_activity, user, date(2026, 8, 1))
+    days = client.get("/api/load?kind=week", headers=headers(user)).json()["days"]
+    assert len(days) == 42
+    assert days[0]["date"] == "2026-09-15"
+
+
+def test_month_load_is_just_the_month(client, make_user, make_activity):
+    user = make_user()
+    run(make_activity, user, date(2026, 8, 1))
+    days = client.get("/api/load?kind=month&offset=1", headers=headers(user)).json()["days"]
+    assert days[0]["date"] == "2026-09-01" and days[-1]["date"] == "2026-09-30"
 
 
 def test_manual_workout_without_load_counts_as_zero_load(client, make_user, make_activity):

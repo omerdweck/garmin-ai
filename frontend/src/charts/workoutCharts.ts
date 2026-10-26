@@ -53,22 +53,19 @@ export function hoursBySport(p: Palette, buckets: HoursBucket[], kind: string): 
       // A year has 53 weekly columns: label only the first week of each month.
       axisLabel: {
         color: p.muted,
-        fontSize: 11,
+        fontSize: kind === "year" ? 10 : 11,
+        hideOverlap: true,
         interval:
           kind === "year"
-            ? (i: number) => i === 0 || labels[i] !== labels[i - 1]
+            ? (i: number) => i > 0 && labels[i] !== labels[i - 1]
             : kind === "month"
               ? (i: number) => i % 5 === 0
               : 0,
       },
     },
-    yAxis: {
-      type: "value",
-      name: "שעות",
-      nameTextStyle: { color: p.muted, fontSize: 11, align: "left" },
-      axisLabel: { color: p.muted, fontSize: 11 },
-      splitLine: splitLine(p),
-    },
+    // No axis name: the card's title already says these are hours, and the
+    // name collided with the legend on a phone.
+    yAxis: { type: "value", axisLabel: { color: p.muted, fontSize: 11 }, splitLine: splitLine(p) },
     tooltip: {
       ...(base(p).tooltip as object),
       axisPointer: { type: "shadow" },
