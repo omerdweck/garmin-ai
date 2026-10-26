@@ -152,32 +152,6 @@
 
 /* ---- 3. activity rings ------------------------------------------------------- */
 
-.home-toggle {
-  display: inline-grid;
-  grid-template-columns: 1fr 1fr;
-  background: var(--skeleton);
-  border-radius: 999px;
-  padding: 3px;
-  flex: none;
-}
-
-.home-toggle button {
-  border: 0;
-  background: transparent;
-  border-radius: 999px;
-  padding: 5px 13px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
-}
-
-.home-toggle button[aria-pressed="true"] {
-  background: var(--text);
-  color: var(--bg);
-}
-
 .rings-stage {
   position: relative;
   display: grid;

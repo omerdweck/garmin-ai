@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
+import { GlassSegmented } from "../components/GlassSegmented";
 import { Icon } from "../components/icons";
 import { LoadGauge, type LoadBalanceData } from "../components/LoadBalance";
 import { Rings } from "../components/Rings";
@@ -307,14 +308,13 @@ function ActivityRingsCard({ rings }: { rings: ActivityRings }) {
     <section className="card home-rings" {...tappable(() => nav.openTab("goals", "goals-week"))}>
       <div className="card-head">
         <h2 className="card-title">טבעות פעילות</h2>
-        {/* stopPropagation: switching the view is not a tap on the card. */}
-        <div className="home-toggle" role="group" aria-label="תצוגה" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-          {(["day", "week"] as Mode[]).map((m) => (
-            <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
-              {m === "day" ? "היום" : "השבוע"}
-            </button>
-          ))}
-        </div>
+        <GlassSegmented<Mode>
+          size="sm"
+          label="תצוגה"
+          options={[{ key: "day", label: "היום" }, { key: "week", label: "השבוע" }]}
+          value={mode}
+          onChange={setMode}
+        />
       </div>
       <div className="rings-stage">
         <Rings rings={rows.map((r) => ({ key: r.key, label: r.label, progress: r.goal > 0 ? r.value / r.goal : 0 }))} />
