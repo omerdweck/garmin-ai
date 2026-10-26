@@ -32,7 +32,7 @@ from app.services.achievements import (
 )
 from app.services.records import format_value, record_meta
 from app.services.workout_schema import DEFAULT_SECONDS_PER_KM
-from app.services.workout_stats import SPORT_KEYS, dashboard_sport, period_for
+from app.services.workout_stats import SPORT_KEYS, dashboard_sport, load_series, period_for
 
 # --- shared -------------------------------------------------------------------
 
@@ -142,6 +142,253 @@ def _workout_blocks(spec: dict, sport: str) -> list[dict]:
     return blocks[:80]
 
 
+# The activity rings' fallbacks: Garmin's own defaults for a new account,
+# used only until a synced day carries the person's real goal.
+DEFAULT_STEP_GOAL = 7500
+DEFAULT_INTENSITY_GOAL = 150
+# The workouts ring: this week against the person's own usual week - the
+# mean over the last AVERAGE_WEEKS full weeks - or this, with no history.
+DEFAULT_WORKOUTS_GOAL = 3
+AVERAGE_WEEKS = 8
+
+
+def _counts_as_workout(activity_type: Optional[str]) -> bool:
+    # Walking counts toward steps, not workouts: a daily walk to work would
+    # otherwise close the workouts ring by Tuesday and say nothing.
+    return dashboard_sport(activity_type) != "walking"
+
+
+def _week(session: Session, user_id: int, today_: date) -> tuple[list[dict], list]:
+    """
+    This week, Sunday to Saturday: what was planned and what was done, one
+    entry per day - the goals tab's week card and the home screen's strip.
+    Also returns the week's activity rows (id, start, type, name, seconds,
+    meters), so the home screen counts from the same query.
+    """
+    week_start, week_end = period_for("week", 0, today_)
+    planned = session.exec(
+        select(StoredWorkout.scheduled_for, StoredWorkout.name, StoredWorkout.sport, StoredWorkout.status).where(
+            StoredWorkout.user_id == user_id,
+            StoredWorkout.scheduled_for >= week_start,
+            StoredWorkout.scheduled_for <= week_end,
+            StoredWorkout.status.in_([STATUS_PLANNED, STATUS_SENT]),
+        )
+    ).all()
+    done = session.exec(
+        select(Activity.id, Activity.start_time, Activity.activity_type, Activity.activity_name,
+               Activity.duration_seconds, Activity.distance_meters)
+        .where(
+            Activity.user_id == user_id,
+            Activity.start_time >= week_start,
+            Activity.start_time < week_end + timedelta(days=1),
+        )
+        .order_by(Activity.start_time)
+    ).all()
+    week = []
+    for i in range(7):
+        day = week_start + timedelta(days=i)
+        week.append({
+            "date": day.isoformat(),
+            "planned": [{"name": n, "sport": dashboard_sport(s), "on_watch": st == STATUS_SENT}
+                        for d, n, s, st in planned if d == day],
+            "done": [{"name": n or "", "sport": dashboard_sport(t), "minutes": round((sec or 0) / 60)}
+                     for _id, st_, t, n, sec, _m in done if st_.date() == day],
+        })
+    return week, done
+
+
+def _latest_goal(session: Session, user_id: int, column, through: date) -> Optional[int]:
+    """The most recent goal Garmin sent on or before `through`, if it ever sent one."""
+    return session.exec(
+        select(column)
+        .where(DailyMetric.user_id == user_id, DailyMetric.date <= through, column.is_not(None))
+        .order_by(col(DailyMetric.date).desc())
+    ).first()
+
+
+def workouts_goal(session: Session, user_id: int, today_: date) -> int:
+    """
+    The person's usual week: mean workouts per week over the last
+    AVERAGE_WEEKS full weeks, the current one left out (it isn't over).
+    Someone newer than that is averaged over the full weeks they have;
+    someone with none gets DEFAULT_WORKOUTS_GOAL. At least 1, so the ring
+    can always close.
+    """
+    week_start, _ = period_for("week", 0, today_)
+    first = session.exec(
+        select(Activity.start_time).where(Activity.user_id == user_id).order_by(Activity.start_time)
+    ).first()
+    if first is None:
+        return DEFAULT_WORKOUTS_GOAL
+    first_week, _ = period_for("week", 0, first.date())
+    start = max(first_week, week_start - timedelta(days=7 * AVERAGE_WEEKS))
+    weeks = (week_start - start).days // 7
+    if weeks <= 0:
+        return DEFAULT_WORKOUTS_GOAL
+    types = session.exec(
+        select(Activity.activity_type).where(
+            Activity.user_id == user_id, Activity.start_time >= start, Activity.start_time < week_start,
+        )
+    ).all()
+    count = sum(1 for t in types if _counts_as_workout(t))
+    # Half up, not Python's round-half-to-even: 2.5 a week is a 3-workout habit.
+    return max(1, int(count / weeks + 0.5))
+
+
+def activity_rings(session: Session, user_id: int, today_: date, week_done: list) -> dict:
+    """
+    The three rings, Apple Fitness style: steps against Garmin's step goal,
+    the week's intensity minutes against Garmin's weekly goal, and the
+    week's workouts against the person's usual week.
+
+    Steps come in two views. The day: today's steps against today's goal.
+    The week: steps so far against the sum of the seven daily goals, since
+    Garmin's Auto Goal moves every day; a day without a stored goal (the
+    rest of the week, a day the sync missed) takes the latest known one.
+    """
+    week_start, week_end = period_for("week", 0, today_)
+    rows = {m.date: m for m in _metrics(session, user_id, week_start, today_)}
+    step_goal = _latest_goal(session, user_id, DailyMetric.daily_step_goal, today_) or DEFAULT_STEP_GOAL
+    intensity_goal = (
+        _latest_goal(session, user_id, DailyMetric.intensity_minutes_goal, today_) or DEFAULT_INTENSITY_GOAL
+    )
+
+    def goal_on(day: date) -> int:
+        row = rows.get(day)
+        return row.daily_step_goal if row is not None and row.daily_step_goal else step_goal
+
+    today_row = rows.get(today_)
+    days = [week_start + timedelta(days=i) for i in range(7)]
+    # Garmin's own counting: a vigorous minute is worth two.
+    intensity = sum(
+        (m.moderate_intensity_minutes or 0) + 2 * (m.vigorous_intensity_minutes or 0) for m in rows.values()
+    )
+    weeks, _ = current_streak_weeks(session, user_id, today_)
+    return {
+        "day": {"steps": (today_row.steps if today_row else None) or 0, "step_goal": goal_on(today_)},
+        "week": {
+            "steps": sum(m.steps or 0 for m in rows.values()),
+            "step_goal": sum(goal_on(d) for d in days),
+            "intensity_minutes": intensity,
+            "intensity_goal": intensity_goal,
+            "workouts": sum(1 for row in week_done if _counts_as_workout(row[2])),
+            "workouts_goal": workouts_goal(session, user_id, today_),
+        },
+        "streak_weeks": weeks,
+    }
+
+
+# Form (Fitness - Fatigue) zones, the cut-offs the workouts tab's Form
+# chart is read with: under -30 high load, -30..-10 building (the
+# productive zone), -10..5 balanced, above 5 fresh.
+LOAD_ZONE_TEXT = {
+    # zone: (the state in a word, what to do about it)
+    "high": ("עומס גבוה", "כדאי יום קל או מנוחה"),
+    "building": ("בונה כושר", "עומס פרודוקטיבי, אפשר להמשיך כמתוכנן"),
+    "balanced": ("מאוזן", "אפשר להעמיס היום"),
+    "fresh": ("רענן", "אפשר להעמיס היום, יום טוב לאימון קשה"),
+}
+
+
+def load_zone(form: float) -> str:
+    if form < -30:
+        return "high"
+    if form < -10:
+        return "building"
+    if form <= 5:
+        return "balanced"
+    return "fresh"
+
+
+def load_balance(session: Session, user_id: int, today_: date) -> Optional[dict]:
+    """Today's point of the workouts tab's Fitness/Fatigue lines, as a zone and an action."""
+    days = load_series(session, user_id, "week", 0, today_)["days"]
+    if not days:
+        return None
+    last = days[-1]
+    zone = load_zone(last["form"])
+    word, advice = LOAD_ZONE_TEXT[zone]
+    return {"form": last["form"], "fitness": last["fitness"], "fatigue": last["fatigue"],
+            "zone": zone, "word": word, "advice": advice}
+
+
+def _hours(minutes: int) -> str:
+    return f"{round(minutes / 30) / 2:g}"
+
+
+def coach_line(rings: dict[str, dict], sleep_minutes: Optional[int], readiness: Optional[int],
+               zone: Optional[str], planned: list[dict], done: list[dict]) -> Optional[str]:
+    """
+    One sentence for the top of the home screen: why today looks the way it
+    does, and what that means for today's plan. Rule-based on purpose - it
+    is read every morning and has to be instant and predictable, not a
+    model call. At most two reasons, worst news first.
+    """
+    if done:
+        name = done[-1]["name"]
+        return f"{name or 'האימון של היום'} כבר מאחוריך, עכשיו זמן להתאושש: שתייה, אוכל ושינה טובה"
+
+    state = {key: ring["state"] for key, ring in rings.items()}
+    bad, good = [], []
+    if state.get("rhr") == "low":  # "low" is the ring's verdict; for resting HR that means it's high
+        bad.append("דופק המנוחה גבוה מהרגיל")
+    if state.get("hrv") == "low":
+        bad.append("ה-HRV נמוך מהרגיל")
+    if sleep_minutes is not None and sleep_minutes < 360:
+        bad.append(f"ישנת רק {_hours(sleep_minutes)} שעות")
+    elif state.get("sleep") == "low":
+        bad.append("השינה הייתה חלשה")
+    if zone == "high":
+        bad.append("העומס המצטבר גבוה")
+    if state.get("body_battery") == "low":
+        bad.append("ה-Body Battery נמוך")
+    if readiness is not None and readiness < 25:
+        bad.append("ציון המוכנות נמוך")
+
+    if state.get("hrv") == "good":
+        good.append("ה-HRV מעל הרגיל")
+    if sleep_minutes is not None and sleep_minutes >= 420:
+        good.append(f"ישנת {_hours(sleep_minutes)} שעות")
+    elif state.get("sleep") == "good":
+        good.append("ישנת טוב")
+    if state.get("body_battery") == "good":
+        good.append("ה-Body Battery גבוה")
+    if state.get("rhr") == "good":
+        good.append("דופק המנוחה נמוך מהרגיל")
+    if zone == "fresh":
+        good.append("הגוף רענן מעומס")
+
+    def joined(reasons: list[str]) -> str:
+        # "ו" glues straight onto the second phrase: "...וישנת", "...וה-HRV".
+        return reasons[0] if len(reasons) == 1 else f"{reasons[0]} ו{reasons[1]}"
+
+    hard = any(
+        w["sport"] != "strength" and any(b.get("kind") == "interval" for b in w.get("blocks") or [])
+        for w in planned
+    )
+    strength = any(w["sport"] == "strength" for w in planned)
+
+    if bad:
+        if hard:
+            return f"{joined(bad)}, כדאי להוריד עצימות באימון של היום"
+        if planned:
+            return f"{joined(bad)}, כדאי לקחת את האימון של היום בקלות"
+        return f"{joined(bad)}, כדאי יום קל"
+    if good:
+        if hard:
+            return f"{joined(good)}, יום טוב לאינטרוולים"
+        if strength:
+            return f"{joined(good)}, יום טוב לאימון הכוח"
+        if planned:
+            return f"{joined(good)}, יום טוב לצאת לאימון של היום"
+        return f"{joined(good)}, יום טוב לאימון איכותי"
+    if all(s == "unknown" for s in state.values()) and sleep_minutes is None:
+        return "אין עדיין נתונים מהשעון להיום, אפשר לצאת לאימון כמתוכנן" if planned else None
+    if planned:
+        return "המדדים בטווח הרגיל, אפשר לצאת לאימון כמתוכנן"
+    return "המדדים בטווח הרגיל, יום טוב לאימון קל או מתון"
+
+
 def today(session: Session, user_id: int, today_: date) -> dict:
     metrics = _metrics(session, user_id, today_ - timedelta(days=3), today_)
     bands = {k: _band(v) for k, v in _baselines(session, user_id).items()}
@@ -169,28 +416,64 @@ def today(session: Session, user_id: int, today_: date) -> dict:
             StoredWorkout.status.in_([STATUS_PLANNED, STATUS_SENT]),
         )
     ).all()
+    workouts = [
+        {
+            "name": w.name,
+            "sport": dashboard_sport(w.sport),
+            "on_watch": w.status == STATUS_SENT,
+            "blocks": _workout_blocks(w.spec or {}, w.sport),
+        }
+        for w in planned
+    ]
+    next_planned = session.exec(
+        select(StoredWorkout.name, StoredWorkout.sport, StoredWorkout.scheduled_for, StoredWorkout.status)
+        .where(
+            StoredWorkout.user_id == user_id,
+            StoredWorkout.scheduled_for > today_,
+            StoredWorkout.status.in_([STATUS_PLANNED, STATUS_SENT]),
+        )
+        .order_by(StoredWorkout.scheduled_for)
+    ).first()
+
+    week, week_done = _week(session, user_id, today_)
+    today_done = [
+        {"id": id_, "name": name or "", "sport": dashboard_sport(t), "seconds": round(sec or 0),
+         "meters": round(meters) if meters else None}
+        for id_, start, t, name, sec, meters in week_done if start.date() == today_
+    ]
 
     weeks, _ = current_streak_weeks(session, user_id, today_)
     readiness, _ = _latest(metrics, "training_readiness_score")
+    # Last night only: an older night says nothing about this morning.
+    sleep_minutes, sleep_on = _latest(metrics, "sleep_duration_minutes")
+    if sleep_on is not None and sleep_on < today_ - timedelta(days=1):
+        sleep_minutes = None
+    balance = load_balance(session, user_id, today_)
 
     return {
         "rings": rings,
         "readiness_score": readiness,
+        "coach_line": coach_line(
+            {r["key"]: r for r in rings}, sleep_minutes, readiness,
+            balance["zone"] if balance else None, workouts, today_done,
+        ),
         "alert": None if alert is None else {
             "rule": alert.rule,
             "text": RULE_TEXT.get(alert.rule, alert.rule),
             "since": alert.started_on.isoformat(),
             "metric": next((m for m, r in RULE_FOR_METRIC.items() if r == alert.rule), None),
         },
-        "workouts": [
-            {
-                "name": w.name,
-                "sport": dashboard_sport(w.sport),
-                "on_watch": w.status == STATUS_SENT,
-                "blocks": _workout_blocks(w.spec or {}, w.sport),
-            }
-            for w in planned
-        ],
+        "workouts": workouts,
+        "today_done": today_done,
+        "next_workout": None if next_planned is None else {
+            "name": next_planned.name,
+            "sport": dashboard_sport(next_planned.sport),
+            "date": next_planned.scheduled_for.isoformat(),
+            "on_watch": next_planned.status == STATUS_SENT,
+        },
+        "week": week,
+        "activity_rings": activity_rings(session, user_id, today_, week_done),
+        "load_balance": balance,
         "streak_weeks": weeks,
         "streak_rule": STREAK_MIN_WORKOUTS,
     }
@@ -309,33 +592,7 @@ def goals(session: Session, user_id: int, today_: date) -> dict:
 
     vo2 = [[m.date.isoformat(), m.vo2_max] for m in rows if m.vo2_max]
 
-    # This week, Sunday to Saturday: what was planned and what was done.
-    week_start, week_end = period_for("week", 0, today_)
-    planned = session.exec(
-        select(StoredWorkout.scheduled_for, StoredWorkout.name, StoredWorkout.sport, StoredWorkout.status).where(
-            StoredWorkout.user_id == user_id,
-            StoredWorkout.scheduled_for >= week_start,
-            StoredWorkout.scheduled_for <= week_end,
-            StoredWorkout.status.in_([STATUS_PLANNED, STATUS_SENT]),
-        )
-    ).all()
-    done = session.exec(
-        select(Activity.start_time, Activity.activity_type, Activity.activity_name, Activity.duration_seconds).where(
-            Activity.user_id == user_id,
-            Activity.start_time >= week_start,
-            Activity.start_time < week_end + timedelta(days=1),
-        )
-    ).all()
-    week = []
-    for i in range(7):
-        day = week_start + timedelta(days=i)
-        week.append({
-            "date": day.isoformat(),
-            "planned": [{"name": n, "sport": dashboard_sport(s), "on_watch": st == STATUS_SENT}
-                        for d, n, s, st in planned if d == day],
-            "done": [{"name": n or "", "sport": dashboard_sport(t), "minutes": round((sec or 0) / 60)}
-                     for st_, t, n, sec in done if st_.date() == day],
-        })
+    week, _ = _week(session, user_id, today_)
 
     plans = session.exec(
         select(TrainingPlan.discipline, TrainingPlan.updated_at).where(
