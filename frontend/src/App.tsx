@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { authenticate, NotMemberError } from "./api";
 import { TabBar, type Tab } from "./components/TabBar";
 import { RangeProvider } from "./range";
 import { Records } from "./screens/Records";
 import { Today } from "./screens/Today";
+import { activityFromUrl, OpenActivityContext } from "./nav";
 import { tg } from "./telegram";
 
 // The charts library is most of the download (~280 KB). Loaded only when a
@@ -11,6 +12,7 @@ import { tg } from "./telegram";
 const Workouts = lazy(() => import("./screens/Workouts").then((m) => ({ default: m.Workouts })));
 const Health = lazy(() => import("./screens/Health").then((m) => ({ default: m.Health })));
 const Goals = lazy(() => import("./screens/Goals").then((m) => ({ default: m.Goals })));
+const ActivityPage = lazy(() => import("./screens/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 
 type Session =
   | { state: "loading" }
@@ -39,20 +41,20 @@ function useSession(): Session {
 
 /**
  * Telegram's own back button (top of the window) instead of one drawn in
- * the page. For now there are only tabs, so "back" means home; deeper
- * pages (a single workout) will push onto this later.
+ * the page. An open workout closes back to the tab it came from; any tab
+ * other than home goes back home.
  */
-function useTelegramBack(tab: Tab, goHome: () => void) {
+function useTelegramBack(tab: Tab, activityOpen: boolean, back: () => void) {
   useEffect(() => {
     if (!tg) return;
-    if (tab === "today") {
+    if (tab === "today" && !activityOpen) {
       tg.BackButton.hide();
       return;
     }
     tg.BackButton.show();
-    tg.BackButton.onClick(goHome);
-    return () => tg?.BackButton.offClick(goHome);
-  }, [tab, goHome]);
+    tg.BackButton.onClick(back);
+    return () => tg?.BackButton.offClick(back);
+  }, [tab, activityOpen, back]);
 }
 
 function Message({ title, text }: { title: string; text: string }) {
@@ -68,13 +70,18 @@ function Message({ title, text }: { title: string; text: string }) {
 
 export function App() {
   const session = useSession();
-  const [tab, setTab] = useState<Tab>("today");
-  const [goHome] = useState(() => () => setTab("today"));
-  useTelegramBack(tab, goHome);
+  // Opened from a post-workout message (?activity=123): straight to that workout.
+  const [activityId, setActivityId] = useState<number | null>(activityFromUrl);
+  const [tab, setTab] = useState<Tab>(() => (activityFromUrl() ? "workouts" : "today"));
+  const back = useCallback(() => {
+    if (activityId !== null) setActivityId(null);
+    else setTab("today");
+  }, [activityId]);
+  useTelegramBack(tab, activityId !== null, back);
 
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [tab]);
+  }, [tab, activityId]);
 
   switch (session.state) {
     case "loading":
@@ -91,7 +98,16 @@ export function App() {
     return <Message title={`שלום ${session.name}`.trim()} text="כדי לראות נתונים, חבר את Garmin בבוט." />;
   }
 
+  if (activityId !== null) {
+    return (
+      <Suspense fallback={<div className="skeleton" style={{ height: 420, margin: 16 }} />}>
+        <ActivityPage id={activityId} />
+      </Suspense>
+    );
+  }
+
   return (
+    <OpenActivityContext.Provider value={setActivityId}>
     <RangeProvider>
       <main className="app">
         {tab === "today" && <Today name={session.name} />}
@@ -104,5 +120,6 @@ export function App() {
       </main>
       <TabBar active={tab} onChange={setTab} />
     </RangeProvider>
+    </OpenActivityContext.Provider>
   );
 }

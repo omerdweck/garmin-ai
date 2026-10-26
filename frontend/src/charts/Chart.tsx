@@ -56,7 +56,14 @@ function usePalette(): Palette {
  *
  * Wrapped in dir="ltr": time runs left to right even on a Hebrew page.
  */
-export function Chart({ build, height }: { build: (p: Palette) => ChartOption; height: number }) {
+export function Chart({ build, height, group, onPointer }: {
+  build: (p: Palette) => ChartOption;
+  height: number;
+  /** Charts in one group move their pointers together (the workout page). */
+  group?: string;
+  /** The data index under the pointer, or null when it leaves. */
+  onPointer?: (index: number | null) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const chart = useRef<ReturnType<typeof echarts.init> | null>(null);
   const palette = usePalette();
@@ -65,6 +72,10 @@ export function Chart({ build, height }: { build: (p: Palette) => ChartOption; h
     if (!ref.current) return;
     const instance = echarts.init(ref.current, undefined, { renderer: "canvas" });
     chart.current = instance;
+    if (group) {
+      instance.group = group;
+      echarts.connect(group);
+    }
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(ref.current);
     return () => {
@@ -77,6 +88,26 @@ export function Chart({ build, height }: { build: (p: Palette) => ChartOption; h
   useEffect(() => {
     chart.current?.setOption(build(palette), { notMerge: true });
   }, [build, palette]);
+
+  // Latest callback in a ref, so the listener is attached once.
+  const pointer = useRef(onPointer);
+  pointer.current = onPointer;
+  useEffect(() => {
+    const instance = chart.current;
+    if (!instance || !onPointer) return;
+    const move = (event: unknown) => {
+      const info = (event as { dataIndex?: number; axesInfo?: { value: number }[] });
+      const index = info.dataIndex ?? (info.axesInfo?.[0] ? Number(info.axesInfo[0].value) : null);
+      pointer.current?.(Number.isFinite(index) ? (index as number) : null);
+    };
+    const leave = () => pointer.current?.(null);
+    instance.on("updateAxisPointer", move);
+    instance.on("globalout", leave);
+    return () => {
+      instance.off("updateAxisPointer", move);
+      instance.off("globalout", leave);
+    };
+  }, [onPointer !== undefined]);
 
   return <div dir="ltr" ref={ref} style={{ height, width: "100%" }} />;
 }
