@@ -159,7 +159,7 @@ async def _register_commands(application: Application) -> None:
     # appear as soon as someone types "/".
     if settings.miniapp_url:
         await application.bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="📊 הדשבורד", web_app=WebAppInfo(url=settings.miniapp_url))
+            menu_button=MenuButtonWebApp(text="📊 דשבורד", web_app=WebAppInfo(url=settings.miniapp_url))
         )
 
 

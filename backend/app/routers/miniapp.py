@@ -41,7 +41,7 @@ from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
 from app.models.history_import import HistoryImport
 from app.models.user import User
-from app.services import workout_stats
+from app.services import dashboard_stats, workout_stats
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
 
@@ -177,3 +177,30 @@ def load(
 @router.get("/calendar")
 def calendar(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
     return workout_stats.calendar(session, user_id, clock.today())
+
+
+# --- today, health, goals, records -------------------------------------------
+
+
+@router.get("/today")
+def today(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
+    return dashboard_stats.today(session, user_id, clock.today())
+
+
+# Not /api/health: that path is the liveness check (app/webapp.py).
+@router.get("/health-metrics")
+def health_metrics(
+    kind: str = _KIND, offset: int = _OFFSET,
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    return dashboard_stats.health(session, user_id, kind, offset, clock.today())
+
+
+@router.get("/goals")
+def goals(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
+    return dashboard_stats.goals(session, user_id, clock.today())
+
+
+@router.get("/records")
+def records(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
+    return dashboard_stats.records(session, user_id, clock.today())
