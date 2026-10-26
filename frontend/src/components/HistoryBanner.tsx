@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
+import { onRefresh } from "../hooks/useApi";
 
 type HistoryStatus = { status: "none" | "pending" | "running" | "done" | "paused"; percent: number };
 
@@ -16,6 +17,7 @@ export function HistoryBanner() {
     let alive = true;
     let timer: number | undefined;
     const load = async () => {
+      window.clearTimeout(timer); // a pull-to-refresh mid-wait: one poll loop, not two
       try {
         const next = await apiGet<HistoryStatus>("/api/history-status");
         if (!alive) return;
@@ -28,7 +30,9 @@ export function HistoryBanner() {
       }
     };
     load();
+    const unregister = onRefresh(load);
     return () => {
+      unregister();
       alive = false;
       window.clearTimeout(timer);
     };

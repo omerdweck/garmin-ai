@@ -12,8 +12,9 @@ import {
 import { ActivityList } from "../components/ActivityList";
 import { HistoryBanner } from "../components/HistoryBanner";
 import { RangeSelector } from "../components/RangeSelector";
-import { Card, ChartPlaceholder, PageHeader, Stat, type Delta } from "../components/ui";
+import { Card, ChartPlaceholder, EmptyState, PageHeader, RETRY, Stat, type Delta } from "../components/ui";
 import { useApi } from "../hooks/useApi";
+import { scrollToFocus } from "../nav";
 import { useRange } from "../range";
 
 type Totals = { workouts: number; distance_km: number; moving_hours: number; elevation_m: number };
@@ -34,17 +35,21 @@ function change(now: number, before: number, kind: string): Delta | undefined {
   return { text: `${Math.abs(pct)}% ${PREVIOUS[kind]}`, dir: pct > 0 ? "up" : "down" };
 }
 
+// A tile scrolls to the card that breaks its number down - same tab, so
+// no nav.openTab(); just the scroll and the flash it would have done.
+const jump = (id: string) => () => scrollToFocus(id);
+
 function Stats({ data, kind }: { data: Summary | null; kind: string }) {
   const t = data?.totals;
   const prev = data?.previous;
   return (
     <div className="grid grid-2">
-      <Stat icon="bars" tone="var(--text)" label="אימונים" value={t && fmt(t.workouts)}
+      <Stat icon="bars" tone="var(--text)" label="אימונים" value={t && fmt(t.workouts)} onClick={jump("workouts-list")}
         delta={t && prev ? change(t.workouts, prev.workouts, kind) : undefined} />
-      <Stat icon="route" tone="var(--orange)" label="מרחק" unit='ק"מ'
+      <Stat icon="route" tone="var(--orange)" label="מרחק" unit='ק"מ' onClick={jump("workouts-list")}
         value={t && fmt(t.distance_km, t.distance_km < 100 ? 1 : 0)}
         delta={t && prev ? change(t.distance_km, prev.distance_km, kind) : undefined} />
-      <Stat icon="clock" tone="var(--sport-running)" label="זמן תנועה" unit="ש׳"
+      <Stat icon="clock" tone="var(--sport-running)" label="זמן תנועה" unit="ש׳" onClick={jump("workouts-hours")}
         value={t && fmt(t.moving_hours, 1)}
         delta={t && prev ? change(t.moving_hours, prev.moving_hours, kind) : undefined}
         sub={t && t.moving_hours >= 24 ? `${fmt(t.moving_hours / 24, 1)} ימים מלאים` : undefined} />
@@ -53,6 +58,10 @@ function Stats({ data, kind }: { data: Summary | null; kind: string }) {
         sub={t && t.elevation_m >= 2000 ? `${fmt(t.elevation_m / 8849, 1)} אוורסטים` : undefined} />
     </div>
   );
+}
+
+function NoLoad() {
+  return <EmptyState icon="pulse" text="עוד אין אימונים עם עומס. אימון עם דופק מהשעון יתחיל למלא את הגרף." />;
 }
 
 /** The calendar fits its 53 columns to the card's real width. */
@@ -105,29 +114,36 @@ export function Workouts() {
       <HistoryBanner />
       <RangeSelector />
       <div className="grid">
+        {(summary.error || load.error) && (
+          <EmptyState card icon="alert" title="חלק מהנתונים לא נטענו" text="בדרך כלל זה חולף תוך רגע." action={RETRY} />
+        )}
         <Stats data={summary.data} kind={range.kind} />
 
-        <Card title={hoursTitle} caption="צבע לכל ענף. לחיצה על ענף במקרא מסתירה אותו.">
-          {hours ? <Chart build={buildHours} height={230} /> : <ChartPlaceholder height={230} />}
+        <Card id="workouts-hours" title={hoursTitle} caption="צבע לכל ענף. לחיצה על ענף במקרא מסתירה אותו.">
+          {!hours ? (
+            <ChartPlaceholder height={230} />
+          ) : summary.data?.totals.workouts ? (
+            <Chart build={buildHours} height={230} />
+          ) : (
+            <EmptyState icon="calendar" text="אין אימונים בתקופה הזו. החצים למעלה עוברים לתקופה קודמת." />
+          )}
         </Card>
 
         <Card title="Fitness מול Fatigue" caption={`Fitness נבנה לאט, לאורך כ-6 שבועות. Fatigue הוא השבוע האחרון, וקופץ מהר.${loadSpan}`}>
           {days ? (
-            days.length ? <Chart build={buildFitness} height={220} /> : <p className="stat-sub">אין עדיין אימונים עם עומס.</p>
+            days.length ? <Chart build={buildFitness} height={220} /> : <NoLoad />
           ) : (
             <ChartPlaceholder height={220} />
           )}
         </Card>
 
-        <Card title="Form" caption={`Fitness פחות Fatigue. מתחת לאפס: סופגים עבודה. אדום: מעבר לקו ה-30-, אזור סיכון.${loadSpan}`}>
-          {days ? days.length ? <Chart build={buildForm} height={160} /> : null : <ChartPlaceholder height={160} />}
+        <Card id="workouts-form" title="Form" caption={`Fitness פחות Fatigue. מתחת לאפס: סופגים עבודה. אדום: מעבר לקו ה-30-, אזור סיכון.${loadSpan}`}>
+          {days ? days.length ? <Chart build={buildForm} height={160} /> : <NoLoad /> : <ChartPlaceholder height={160} />}
         </Card>
 
-        <ActivityList />
+        <ActivityList id="workouts-list" />
 
         <CalendarCard />
-
-        {(summary.error || load.error) && <p className="stat-sub">חלק מהנתונים לא נטענו. נסה לסגור ולפתוח שוב.</p>}
       </div>
     </>
   );

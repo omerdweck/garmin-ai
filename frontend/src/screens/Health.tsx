@@ -4,7 +4,7 @@ import { metricLine, sleepStages, SLEEP_STAGES, type Band, type Point, type Slee
 import { Icon, type IconName } from "../components/icons";
 import { HistoryBanner } from "../components/HistoryBanner";
 import { RangeSelector } from "../components/RangeSelector";
-import { Card, ChartPlaceholder, PageHeader } from "../components/ui";
+import { Card, ChartPlaceholder, EmptyState, PageHeader, RETRY } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useRange } from "../range";
 
@@ -45,7 +45,7 @@ function MetricCard({ data, meta, start, end, year }: {
   );
   const lastWeek = data.last_week;
   return (
-    <section className="card">
+    <section className="card" id={`metric-${meta.key}`}>
       <h2 className="card-title">
         {meta.name}
         <span style={{ color: meta.color }}><Icon name={meta.icon} size={18} stroke={2.2} /></span>
@@ -77,7 +77,7 @@ function SleepCard({ data, year }: { data: Health; year: boolean }) {
   const build = useCallback((p: Palette) => sleepStages(p, data.sleep, year), [data, year]);
   const last = data.sleep.at(-1);
   return (
-    <section className="card">
+    <section className="card" id="metric-sleep">
       <h2 className="card-title">
         שינה
         <span style={{ color: "#7c9be6" }}><Icon name="moon" size={18} stroke={2.2} /></span>
@@ -95,7 +95,11 @@ function SleepCard({ data, year }: { data: Health; year: boolean }) {
           </div>
         )}
       </div>
-      {data.sleep.length ? <Chart build={build} height={200} /> : <p className="stat-sub">אין נתוני שינה בטווח הזה.</p>}
+      {data.sleep.length ? (
+        <Chart build={build} height={200} />
+      ) : (
+        <EmptyState icon="moon" text="אין נתוני שינה בתקופה הזו. ישנים עם השעון? הלילה יופיע כאן אחרי הסנכרון של הבוקר." />
+      )}
       {last?.bed && last.wake && (
         <p className="stat-sub" style={{ marginTop: 8 }}>
           הלילה האחרון: נרדמת ב-<span className="num">{last.bed}</span>, קמת ב-<span className="num">{last.wake}</span>
@@ -112,6 +116,7 @@ export function Health() {
   const range = useRange();
   const { data, error } = useApi<Health>(`/api/health-metrics?kind=${range.kind}&offset=${range.offset}`);
   const year = range.kind === "year";
+  const shown = data ? METRICS.filter((m) => data.metrics[m.key]?.days.length) : [];
 
   return (
     <>
@@ -125,11 +130,17 @@ export function Health() {
       <RangeSelector />
       <div className="grid">
         {!data && !error && METRICS.slice(0, 4).map((m) => <Card key={m.key} title={m.name} caption={m.caption}><ChartPlaceholder height={130} /></Card>)}
-        {error && <p className="stat-sub">הנתונים לא נטענו. נסה לסגור ולפתוח שוב.</p>}
+        {error && <EmptyState card icon="alert" title="הנתונים לא נטענו" text="בדרך כלל זה חולף תוך רגע." action={RETRY} />}
         {data && <SleepCard data={data} year={year} />}
-        {data && METRICS.filter((m) => data.metrics[m.key]?.days.length).map((m) => (
-          <MetricCard key={m.key} data={data.metrics[m.key]} meta={m} start={data.start} end={data.end} year={year} />
+        {shown.map((m) => (
+          <MetricCard key={m.key} data={data!.metrics[m.key]} meta={m} start={data!.start} end={data!.end} year={year} />
         ))}
+        {data && shown.length === 0 && (
+          <EmptyState
+            card icon="heart" title="אין מדדים בתקופה הזו"
+            text="השעון מעביר אותם ל-Garmin Connect בכל סנכרון. אפשר לחזור לתקופה קודמת עם החצים."
+          />
+        )}
       </div>
     </>
   );
