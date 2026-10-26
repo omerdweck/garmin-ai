@@ -13,5 +13,8 @@ export default defineConfig({
     outDir: "dist",
     // Phones on mobile data: no source maps shipped, small chunks.
     sourcemap: false,
+    // The charts chunk (ECharts) is ~210 KB gzipped and loads only with the
+    // first chart tab - expected, not a mistake worth a warning each build.
+    chunkSizeWarningLimit: 700,
   },
 });
