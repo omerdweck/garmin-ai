@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { hapticSelect } from "../telegram";
 import { Icon, type IconName } from "./icons";
 
@@ -5,7 +6,7 @@ export type Tab = "today" | "workouts" | "health" | "goals" | "records";
 
 export const TABS: { key: Tab; label: string; icon: IconName }[] = [
   { key: "today", label: "היום", icon: "home" },
-  { key: "workouts", label: "אימונים", icon: "pulse" },
+  { key: "workouts", label: "אימונים", icon: "calendarCheck" },
   { key: "health", label: "בריאות", icon: "heart" },
   { key: "goals", label: "יעדים", icon: "target" },
   { key: "records", label: "שיאים", icon: "trophy" },
@@ -13,7 +14,12 @@ export const TABS: { key: Tab; label: string; icon: IconName }[] = [
 
 export function TabBar({ active, onChange }: { active: Tab; onChange(tab: Tab): void }) {
   return (
-    <nav className="tabbar" aria-label="לשוניות">
+    <nav
+      className="tabbar"
+      aria-label="לשוניות"
+      style={{ "--i": Math.max(0, TABS.findIndex((t) => t.key === active)) } as CSSProperties}
+    >
+      <span className="tabbar-knob" aria-hidden="true" />
       {TABS.map((tab) => {
         const on = active === tab.key;
         return (
@@ -25,7 +31,7 @@ export function TabBar({ active, onChange }: { active: Tab; onChange(tab: Tab): 
               onChange(tab.key);
             }}
           >
-            <Icon name={tab.icon} size={24} stroke={on ? 2.4 : 1.7} />
+            <Icon name={tab.icon} size={23} stroke={on ? 2.3 : 1.7} />
             {tab.label}
           </button>
         );
