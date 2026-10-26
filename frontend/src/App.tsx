@@ -1,11 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { authenticate, NotMemberError } from "./api";
 import { AppBar } from "./components/AppBar";
 import { TabBar, type Tab } from "./components/TabBar";
 import { RangeProvider } from "./range";
 import { Records } from "./screens/Records";
 import { Today } from "./screens/Today";
-import { activityFromUrl, OpenActivityContext } from "./nav";
+import { activityFromUrl, NavContext, scrollToFocus, type Nav } from "./nav";
 import { tg } from "./telegram";
 
 // The charts library is most of the download (~280 KB). Loaded only when a
@@ -81,9 +81,24 @@ export function App() {
   }, [activityId]);
   useTelegramBack(tab, activityId !== null, back);
 
+  // A card that sends the user somewhere can name a spot to scroll to.
+  const [focus, setFocus] = useState<string | null>(null);
+  const nav = useMemo<Nav>(() => ({
+    openTab(next, target) {
+      setActivityId(null);
+      setTab(next);
+      setFocus(target ?? null);
+    },
+    openActivity: (id) => setActivityId(id),
+  }), []);
+
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [tab, activityId]);
+    if (!focus || activityId !== null) return;
+    const cancel = scrollToFocus(focus);
+    setFocus(null);
+    return cancel;
+  }, [tab, activityId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   switch (session.state) {
     case "loading":
@@ -102,17 +117,19 @@ export function App() {
 
   if (activityId !== null) {
     return (
-      <Suspense fallback={<div className="skeleton" style={{ height: 420, margin: 16 }} />}>
-        <ActivityPage id={activityId} />
-      </Suspense>
+      <NavContext.Provider value={nav}>
+        <Suspense fallback={<div className="skeleton" style={{ height: 420, margin: 16 }} />}>
+          <ActivityPage id={activityId} />
+        </Suspense>
+      </NavContext.Provider>
     );
   }
 
   return (
-    <OpenActivityContext.Provider value={setActivityId}>
+    <NavContext.Provider value={nav}>
     <RangeProvider>
       <main className="app">
-        <AppBar name={session.name} onAlerts={() => setTab("health")} />
+        <AppBar name={session.name} onAlerts={() => nav.openTab("health")} />
         {tab === "today" && <Today name={session.name} />}
         <Suspense fallback={<div className="skeleton" style={{ height: 240, marginTop: 60 }} />}>
           {tab === "workouts" && <Workouts />}
@@ -123,6 +140,6 @@ export function App() {
       </main>
       <TabBar active={tab} onChange={setTab} />
     </RangeProvider>
-    </OpenActivityContext.Provider>
+    </NavContext.Provider>
   );
 }

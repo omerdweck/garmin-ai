@@ -907,3 +907,16 @@ button {
 .sport-split > span:last-child {
   border-radius: 0 999px 999px 0;
 }
+
+/* A card someone navigated to (nav.openTab(tab, id)): a short orange glow. */
+.focus-flash {
+  animation: focus-flash 1.6s ease;
+  scroll-margin-top: 16px;
+}
+
+@keyframes focus-flash {
+  0%,
+  40% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 55%, transparent), var(--shadow);
+  }
+}
