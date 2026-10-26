@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "../api";
 import { Chart, type Palette } from "../charts/Chart";
 import { CHART_GROUP, lengthsChart, metricChart, paceOf, STROKE_LABEL, xAxisOf, type Length, type Points, type Series } from "../charts/activityCharts";
+import { GlassSegmented } from "../components/GlassSegmented";
 import { RouteMap } from "../components/RouteMap";
 import { EmptyState } from "../components/ui";
 import { duration, fmt, pace, when } from "../format";
@@ -325,11 +326,14 @@ export function ActivityPage({ id }: { id: number }) {
 
       {(d || isStrength) && (
         <>
-          <div className="act-tabs" role="tablist">
-            {tabs.map(([key, label]) => (
-              <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>
-            ))}
-          </div>
+          <GlassSegmented<Tab>
+            className="act-tabs"
+            role="tablist"
+            label="תצוגת האימון"
+            options={tabs.map(([key, label]) => ({ key, label }))}
+            value={tab}
+            onChange={setTab}
+          />
 
           {tab === "metrics" && (
             <>

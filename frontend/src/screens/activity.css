@@ -149,42 +149,30 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 0;
-  background: rgba(30, 30, 32, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(30, 30, 32, 0.55);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.22), 0 6px 16px rgba(0, 0, 0, 0.3);
   color: #fff;
   font-size: 18px;
   cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.map-expand:active {
+  transform: scale(0.92);
 }
 
 /* ---- pill tabs -------------------------------------------------------------- */
 
 .act-tabs {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 4px;
-  background: var(--card);
-  border-radius: 999px;
-  padding: 5px;
   margin: 16px 0 14px;
-  border: 1px solid var(--card-border);
-  box-shadow: var(--shadow);
 }
 
 .act-tabs button {
-  border: 0;
-  background: transparent;
-  border-radius: 999px;
-  padding: 9px 0;
   font-size: 14px;
-  font-weight: 500;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.act-tabs button[aria-selected="true"] {
-  background: var(--text);
-  color: var(--bg);
+  padding: 9px 0;
 }
 
 /* ---- cards ---------------------------------------------------------------- */

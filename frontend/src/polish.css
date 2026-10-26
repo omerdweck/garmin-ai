@@ -246,7 +246,7 @@ body {
 }
 
 .arrow:not(:disabled):active,
-.segmented button:active {
+.glass-seg button:active {
   transform: scale(0.94);
 }
 
@@ -315,7 +315,7 @@ body {
   .pill-button:active,
   .sync-button:active,
   .arrow:not(:disabled):active,
-  .segmented button:active {
+  .glass-seg button:active {
     transform: none;
   }
 

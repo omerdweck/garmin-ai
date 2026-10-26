@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { RANGE_LABELS, useRange, type RangeKind } from "../range";
 import { hapticSelect } from "../telegram";
+import { GlassSegmented } from "./GlassSegmented";
 import { Icon } from "./icons";
 
 /**
@@ -42,20 +43,13 @@ export function RangeSelector() {
 
   return (
     <>
-      <div className="segmented" role="group" aria-label="טווח">
-        {kinds.map((kind) => (
-          <button
-            key={kind}
-            aria-pressed={range.kind === kind}
-            onClick={() => {
-              if (kind !== range.kind) hapticSelect();
-              range.setKind(kind);
-            }}
-          >
-            {RANGE_LABELS[kind]}
-          </button>
-        ))}
-      </div>
+      <GlassSegmented
+        className="range-seg"
+        label="טווח"
+        options={kinds.map((kind) => ({ key: kind, label: RANGE_LABELS[kind] }))}
+        value={range.kind}
+        onChange={range.setKind}
+      />
       <div ref={marker} className="range-sentinel" aria-hidden="true" />
       <div className={`range-nav${stuck ? " stuck" : ""}`}>
         <button className="arrow" onClick={step(range.back)} disabled={!range.canGoBack} aria-label="התקופה הקודמת">
