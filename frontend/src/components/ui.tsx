@@ -41,7 +41,7 @@ export function Card({
 }
 
 /** A big number with its context line. `value` undefined draws a placeholder. */
-export function Stat({ label, value, sub }: { label: string; value?: string; sub?: string }) {
+export function Stat({ label, value, sub }: { label: string; value?: string; sub?: string | undefined }) {
   return (
     <section className="card">
       <div className="kicker">{label}</div>

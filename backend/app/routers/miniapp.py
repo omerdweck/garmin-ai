@@ -28,11 +28,12 @@ migration), and a whole-row load would ask for the rest.
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.core import clock
 from app.core.config import settings
 from app.core.security import create_miniapp_token, decode_miniapp_token
 from app.core.telegram_webapp import InitDataError, validate_init_data
@@ -40,6 +41,7 @@ from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
 from app.models.history_import import HistoryImport
 from app.models.user import User
+from app.services import workout_stats
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
 
@@ -147,3 +149,31 @@ def history_status(
     # next_date is the next day still to fetch, so the loaded range starts the day after it.
     loaded_from = record.oldest_date if record.status == "done" else record.next_date + timedelta(days=1)
     return HistoryStatus(status=record.status, percent=record.percent, loaded_from=loaded_from.isoformat())
+
+
+# --- the workouts tab -------------------------------------------------------
+# kind/offset as in the page's period selector; the year's offset is fixed
+# at 0 there, but accepted here so a later "last year" view needs no change.
+_KIND = Query("week", pattern="^(week|month|year)$")
+_OFFSET = Query(0, ge=0, le=60)
+
+
+@router.get("/workouts")
+def workouts(
+    kind: str = _KIND, offset: int = _OFFSET,
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    return workout_stats.summary(session, user_id, kind, offset, clock.today())
+
+
+@router.get("/load")
+def load(
+    kind: str = _KIND, offset: int = _OFFSET,
+    user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session),
+) -> dict:
+    return workout_stats.load_series(session, user_id, kind, offset, clock.today())
+
+
+@router.get("/calendar")
+def calendar(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
+    return workout_stats.calendar(session, user_id, clock.today())
