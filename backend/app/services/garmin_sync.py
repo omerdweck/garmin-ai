@@ -5,6 +5,7 @@ a scheduled Celery task will call later, so nothing here needs to
 change when the scheduling layer is added.
 """
 
+import logging
 import time
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from app.core.garmin_client import (
     GarminRateLimitError,
     Garmin,
     get_activities,
+    get_activities_between,
     get_daily_summary,
     get_exercise_sets,
     get_hrv_data,
@@ -30,11 +32,13 @@ from app.core.garmin_client import (
     get_watch_last_upload,
     resume_garmin_session,
 )
-from app.models.activity import Activity
+from app.models.activity import SOURCE_GARMIN, Activity
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
 from app.services.records import sync_personal_records
 from app.services.sleep_details import apply_sleep_details
+
+logger = logging.getLogger(__name__)
 
 
 def _seconds_to_minutes(seconds) -> int | None:
@@ -304,6 +308,60 @@ def store_activities(session: Session, user_id: int, raw_activities: list[dict])
     return added
 
 
+# How far back a deletion in Garmin Connect is noticed. A workout deleted
+# there is almost always a recent mistake (the watch left running, a test
+# recording); a month covers that with one request per sync.
+DELETION_WINDOW_DAYS = 30
+
+
+def remove_deleted_activities(session: Session, user_id: int, garmin_session: Garmin) -> int:
+    """
+    Removes workouts the user deleted in Garmin Connect, within the window.
+
+    The sync only ever added: a workout deleted in Garmin stayed here for
+    good - in the history, the totals and the coach's view. This compares
+    the window with Garmin's own list and drops what Garmin no longer has.
+
+    Guarded on purpose, because a wrong answer here deletes real data:
+      - only Garmin-sourced rows; manual entries are never touched
+      - the first day of the window is left alone (Garmin's date filter and
+        our local start times can disagree at the edge)
+      - if Garmin returns nothing at all while we hold several workouts in
+        the window, that is far likelier an API hiccup than someone deleting
+        a whole month - nothing is removed and it's logged
+    Returns how many were removed.
+    """
+    today = clock.today()
+    start = today - timedelta(days=DELETION_WINDOW_DAYS)
+    remote = get_activities_between(garmin_session, start.isoformat(), today.isoformat())
+    if not isinstance(remote, list):
+        return 0
+    remote_ids = {a.get("activityId") for a in remote if a.get("activityId") is not None}
+
+    local = session.exec(
+        select(Activity).where(
+            Activity.user_id == user_id,
+            Activity.source == SOURCE_GARMIN,
+            Activity.garmin_activity_id.is_not(None),
+            Activity.start_time >= datetime.combine(start + timedelta(days=1), datetime.min.time()),
+        )
+    ).all()
+    if not remote_ids and len(local) > 2:
+        logger.warning(
+            "Garmin listed no activities for user %s while %s are stored in the window - not removing anything",
+            user_id, len(local),
+        )
+        return 0
+
+    gone = [a for a in local if a.garmin_activity_id not in remote_ids]
+    for activity in gone:
+        session.delete(activity)
+    if gone:
+        session.commit()
+        logger.info("Removed %s activities deleted in Garmin Connect for user %s", len(gone), user_id)
+    return len(gone)
+
+
 def ensure_exercise_sets(session: Session, activity: Activity) -> Activity:
     """
     Lazily fills in the per-set exercise breakdown for a strength workout.
@@ -386,6 +444,13 @@ def sync_user_garmin_data(
 
         _sync_race_predictions(session, user_id, garmin_session, days_back)
         _sync_activities(session, user_id, garmin_session, limit=activity_limit)
+        # After adding, never instead of it - and never allowed to fail the
+        # sync: a missed deletion is noticed on the next run.
+        try:
+            remove_deleted_activities(session, user_id, garmin_session)
+        except Exception:
+            session.rollback()
+            logger.warning("Checking for deleted activities failed for user %s", user_id, exc_info=True)
 
         # Last, and its result carried back to the caller: a broken record is
         # the one thing in a sync worth an unprompted message, and only the

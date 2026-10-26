@@ -37,6 +37,7 @@ __all__ = [
     "get_hrv_data",
     "get_max_metrics",
     "get_activities",
+    "get_activities_between",
     "get_exercise_sets",
     "get_watch_last_upload",
     "get_training_load",
@@ -147,6 +148,11 @@ def get_max_metrics(session: Garmin, date: str) -> list[dict]:
 def get_activities(session: Garmin, start: int = 0, limit: int = 20) -> list[dict]:
     """Most recent activities first. start/limit are for pagination through history."""
     return session.get_activities(start, limit)
+
+
+def get_activities_between(session: Garmin, start: str, end: str) -> list[dict]:
+    """Every activity whose start falls between two dates ('YYYY-MM-DD', inclusive)."""
+    return session.get_activities_by_date(start, end)
 
 
 def _newest_device_entry(device_map: dict) -> dict:
