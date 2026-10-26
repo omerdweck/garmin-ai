@@ -357,3 +357,142 @@ button {
   color: var(--muted);
   margin: 0;
 }
+
+/* ---- metric cards (health, goals) ---------------------------------------- */
+
+.metric-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.metric-value {
+  text-align: left;
+  flex: none;
+}
+
+.metric-value .stat-value {
+  margin-top: 2px;
+}
+
+.chart-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.chart-notes span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.alert {
+  border-color: color-mix(in srgb, var(--zone-5) 45%, var(--line));
+  background: color-mix(in srgb, var(--zone-5) 8%, var(--card));
+}
+
+.progress {
+  height: 8px;
+  background: var(--skeleton);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.list li:first-child {
+  border-top: 0;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.week-day {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 86px;
+  padding: 6px 4px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.week-day.today {
+  border-color: var(--text);
+}
+
+.chip {
+  display: block;
+  border-radius: 6px;
+  padding: 3px 2px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip.planned {
+  border: 1px dashed currentColor;
+}
+
+.chip.done {
+  color: #fff;
+}
+
+.blocks {
+  display: flex;
+  gap: 2px;
+  height: 34px;
+  align-items: flex-end;
+  margin-top: 10px;
+}
+
+.blocks span {
+  border-radius: 3px;
+  min-width: 3px;
+}
+
+.split-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 8px 0 6px;
+}
