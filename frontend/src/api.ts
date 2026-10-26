@@ -55,8 +55,8 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
-/** The same, with a JSON body - for the few things the page changes (marking notifications read). */
-export function apiPost<T>(path: string, body: unknown): Promise<T> {
+/** The same, with a JSON body - for the few things the page changes (marking notifications read, asking for a sync). */
+export function apiPost<T>(path: string, body: unknown = {}): Promise<T> {
   return request<T>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -41,7 +41,7 @@ from app.db.session import get_session
 from app.models.garmin_account import GarminAccount
 from app.models.history_import import HistoryImport
 from app.models.user import User
-from app.services import activity_page, dashboard_stats, notifications, workout_stats
+from app.services import activity_page, app_sync, dashboard_stats, notifications, workout_stats
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
 
@@ -270,3 +270,22 @@ def notification_mark_read(
     if len(body.ids) > 200:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="too many ids")
     return {"unread": notifications.mark_read(session, user_id, body.ids, everything=body.all)}
+
+
+# --- freshness -------------------------------------------------------------------
+
+
+@router.get("/sync-status")
+def sync_status(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
+    """When we last pulled from Garmin, and whether a pull is running now."""
+    return app_sync.status(session, user_id)
+
+
+@router.post("/sync")
+def sync_now(user_id: int = Depends(get_miniapp_user_id), session: Session = Depends(get_session)) -> dict:
+    """
+    Queues the same sync as the bot's 🔄 button - nothing is written here,
+    so the read-only role is enough. Always 200: every outcome is something
+    the page says in words, not an error (see app_sync.request_sync).
+    """
+    return {"status": app_sync.request_sync(session, user_id)}

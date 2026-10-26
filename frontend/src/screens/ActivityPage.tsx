@@ -3,7 +3,9 @@ import { apiGet } from "../api";
 import { Chart, type Palette } from "../charts/Chart";
 import { CHART_GROUP, lengthsChart, metricChart, paceOf, STROKE_LABEL, xAxisOf, type Length, type Points, type Series } from "../charts/activityCharts";
 import { RouteMap } from "../components/RouteMap";
+import { EmptyState } from "../components/ui";
 import { duration, fmt, pace, when } from "../format";
+import { useNav } from "../nav";
 import { SPORTS } from "../sports";
 import "./activity.css";
 
@@ -237,6 +239,7 @@ function Summary({ a }: { a: Activity }) {
 
 export function ActivityPage({ id }: { id: number }) {
   const { data: a, error } = useActivity(id);
+  const nav = useNav();
   const [tab, setTab] = useState<Tab>("metrics");
   const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [bigMap, setBigMap] = useState(false);
@@ -265,7 +268,17 @@ export function ActivityPage({ id }: { id: number }) {
     };
   }, [points]);
 
-  if (error) return <div className="act-page"><p className="act-empty">האימון לא נמצא.</p></div>;
+  if (error) {
+    return (
+      <div className="act-page">
+        <EmptyState
+          card icon="watch" title="האימון לא נטען"
+          text="ייתכן שהוא נמחק ב-Garmin, או שהחיבור נקטע לרגע."
+          action={{ label: "לרשימת האימונים", run: () => nav.openTab("workouts", "workouts-list") }}
+        />
+      </div>
+    );
+  }
   if (!a || !sport) return <div className="act-page"><div className="skeleton" style={{ height: 420, borderRadius: 24 }} /></div>;
 
   const isSwim = a.sport === "swimming";

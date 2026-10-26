@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
-import { Card, HeroCard, PageHeader, Stat } from "../components/ui";
+import { Card, EmptyState, HeroCard, PageHeader, RETRY, Stat } from "../components/ui";
 import { useApi } from "../hooks/useApi";
+import { useNav } from "../nav";
+import { useRange } from "../range";
 import { SPORTS } from "../sports";
 
 type Records = {
@@ -26,11 +28,18 @@ function MyYear({ year }: { year: Records["year"] }) {
   const total = Object.values(year.hours_by_sport).reduce((a, b) => a + b, 0);
   const top = sportOf(year.top_sport);
   const shown = SPORTS.filter((s) => year.hours_by_sport[s.key] > 0);
+  const nav = useNav();
+  const range = useRange();
   return (
     <>
       <HeroCard
         kicker="השנה שלי · 365 הימים האחרונים"
         title={year.top_sport ? <>{top.icon} {top.label} מובילה</> : "השנה שלך באימונים"}
+        onClick={() => {
+          // The same year, broken down: the workouts tab in its year view.
+          range.setKind("year");
+          nav.openTab("workouts");
+        }}
         sub={year.best_month ? <>החודש החזק: {monthName(year.best_month)} · <span className="num">{year.best_month_hours}</span> ש׳</> : undefined}
         stats={[
           { value: <span className="num">{n(year.workouts)}</span>, label: "אימונים" },
@@ -71,11 +80,12 @@ function MyYear({ year }: { year: Records["year"] }) {
 
 export function Records() {
   const { data, error } = useApi<Records>("/api/records");
+  const nav = useNav();
   return (
     <>
       <PageHeader title="שיאים" subtitle="הטובים ביותר שלך, בכל ענף." />
       <div className="grid">
-        {error && <p className="stat-sub">הנתונים לא נטענו. נסה לסגור ולפתוח שוב.</p>}
+        {error && <EmptyState card icon="alert" title="הנתונים לא נטענו" text="בדרך כלל זה חולף תוך רגע." action={RETRY} />}
         {!data && !error && <div className="skeleton" style={{ height: 260, borderRadius: 24 }} />}
         {data && <MyYear year={data.year} />}
 
@@ -93,12 +103,15 @@ export function Records() {
                   </li>
                 ))}
               </ul>
-            ) : <p className="stat-sub">עוד אין שיאים רשומים.</p>}
+            ) : (
+              <EmptyState icon="medal" text="עוד אין שיאים. Garmin רושמת שיא אחרי ריצה, רכיבה או שחייה מהירות מכל מה שהיה." />
+            )}
           </Card>
         )}
 
         {data && data.next.length > 0 && (
-          <Card title="הבא בתור" caption="אבני הדרך הבאות, וכמה נשאר.">
+          // The streak at the bottom counts weeks; this week's card shows how the current one is going.
+          <Card title="הבא בתור" caption="אבני הדרך הבאות, וכמה נשאר." onClick={() => nav.openTab("goals", "goals-week")}>
             {data.next.map((m) => (
               <div key={m.text} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>

@@ -1,0 +1,326 @@
+/*
+ * The small interactions on top of the look in theme.css: cards that
+ * go somewhere, the sync line, pull to refresh, empty states, the range
+ * bar that follows you down the page, and cards easing in on a new tab.
+ * Kept apart from theme.css so the look and the behaviour can each be
+ * changed without reading through the other.
+ */
+
+/* Pulling down at the top is ours (PullToRefresh), not the browser's. */
+html,
+body {
+  overscroll-behavior-y: contain;
+}
+
+/* ---- cards that go somewhere --------------------------------------------- */
+
+.tappable {
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.tappable:active {
+  transform: scale(0.98);
+}
+
+.tappable:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
+/* Clear of the chevron, which sits where a title line ends (left, in Hebrew). */
+.tappable > .card-title,
+.tappable > .hero-kicker {
+  padding-inline-end: 34px;
+}
+
+.card-chevron {
+  position: absolute;
+  top: 14px;
+  inset-inline-end: 14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 5%, var(--card));
+}
+
+.hero-card .card-chevron {
+  color: var(--hero-text);
+  background: rgba(255, 255, 255, 0.1);
+  z-index: 1;
+}
+
+/* ---- "updated 12 minutes ago" ------------------------------------------- */
+
+.sync-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 8px;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--good);
+  flex: none;
+}
+
+.sync-status.stale {
+  color: var(--warn);
+}
+
+.sync-status.stale .sync-dot {
+  background: var(--orange);
+}
+
+.sync-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.sync-button:active {
+  transform: scale(0.96);
+}
+
+.sync-note {
+  color: var(--text);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- pull to refresh ------------------------------------------------------ */
+
+.ptr {
+  position: fixed;
+  top: calc(var(--safe-top) + 10px);
+  left: 50%; /* physical on purpose: centered is centered in either direction */
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  color: var(--muted);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  z-index: 1100;
+  pointer-events: none;
+  transition: transform 0.25s ease, opacity 0.25s ease, color 0.15s ease;
+}
+
+.ptr.dragging {
+  transition: color 0.15s ease;
+}
+
+.ptr.ready,
+.ptr.busy {
+  color: var(--orange);
+}
+
+.ptr.busy svg {
+  animation: spin 0.9s linear infinite;
+}
+
+/* ---- empty and error states ----------------------------------------------- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 14px 8px 6px;
+}
+
+.empty-state.card {
+  padding: 26px 18px;
+}
+
+.empty-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 6%, var(--card));
+}
+
+.empty-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.empty-text strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+/* The mockup's black pill, as a button. */
+.pill-button {
+  min-height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pill-button:active {
+  transform: scale(0.96);
+}
+
+/* ---- the range bar follows you down --------------------------------------- */
+
+/*
+ * Sticky, so "which month am I looking at" and the arrows stay in reach
+ * on a long tab. It gets a background only once it actually sticks, so
+ * at the top of the page it looks exactly as before.
+ */
+.range-nav {
+  position: sticky;
+  top: calc(var(--safe-top) + 8px);
+  z-index: 40;
+  padding: 4px;
+  margin-inline: -4px;
+  border-radius: 999px;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.range-nav.stuck {
+  background: color-mix(in srgb, var(--card) 90%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.1);
+}
+
+.range-nav.stuck .arrow {
+  box-shadow: none;
+  background: color-mix(in srgb, var(--text) 6%, var(--card));
+}
+
+.range-sentinel {
+  height: 0;
+}
+
+/* A thumb, not a fingertip: 44px, Apple's minimum. */
+.arrow {
+  width: 44px;
+  height: 44px;
+}
+
+.arrow:not(:disabled):active,
+.segmented button:active {
+  transform: scale(0.94);
+}
+
+/* ---- the week's days, tappable ---------------------------------------------- */
+
+.week-row button {
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.week-row button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--text) 6%, var(--card));
+}
+
+.week-detail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 4%, var(--card));
+  font-size: 14px;
+}
+
+.week-detail ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+/* ---- a new tab eases in --------------------------------------------------- */
+
+/*
+ * :where() keeps this at zero specificity, so .focus-flash (a card
+ * someone navigated to) still wins the animation property when it lands.
+ */
+:where(.app > .page-header, .app > .grid > *, .app > .grid > .grid > *) {
+  animation: card-in 0.38s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+:where(.app > .grid > :nth-child(2)) { animation-delay: 40ms; }
+:where(.app > .grid > :nth-child(3)) { animation-delay: 80ms; }
+:where(.app > .grid > :nth-child(4)) { animation-delay: 120ms; }
+:where(.app > .grid > :nth-child(n + 5)) { animation-delay: 160ms; }
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.app > .page-header, .app > .grid > *, .app > .grid > .grid > *) {
+    animation: none;
+  }
+
+  .tappable,
+  .ptr,
+  .range-nav {
+    transition: none;
+  }
+
+  .tappable:active,
+  .pill-button:active,
+  .sync-button:active,
+  .arrow:not(:disabled):active,
+  .segmented button:active {
+    transform: none;
+  }
+
+  .spin,
+  .ptr.busy svg {
+    animation: none;
+  }
+}

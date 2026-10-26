@@ -11,7 +11,7 @@ Postgres needs SELECT as well for the UPDATE's WHERE clause, and the screen
 reads the rows anyway.
 
 Revision ID: d5e2a9c47b18
-Revises: c4f8a1e2d6b9
+Revises: d1a7c3e9b5f2
 Create Date: 2026-10-26 18:00:00
 """
 from typing import Sequence, Union
@@ -22,7 +22,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "d5e2a9c47b18"
-down_revision: Union[str, None] = "c4f8a1e2d6b9"
+down_revision: Union[str, None] = "d1a7c3e9b5f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
