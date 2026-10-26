@@ -1,4 +1,5 @@
-import { Card, PageHeader } from "../components/ui";
+import type { CSSProperties } from "react";
+import { Card, HeroCard, PageHeader, Stat } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { SPORTS } from "../sports";
 
@@ -24,35 +25,47 @@ const n = (v: number) => v.toLocaleString("he-IL");
 function MyYear({ year }: { year: Records["year"] }) {
   const total = Object.values(year.hours_by_sport).reduce((a, b) => a + b, 0);
   const top = sportOf(year.top_sport);
+  const shown = SPORTS.filter((s) => year.hours_by_sport[s.key] > 0);
   return (
-    <section className="card">
-      <div className="kicker">השנה שלי · 365 הימים האחרונים</div>
-      <div className="grid grid-2" style={{ marginTop: 10, gap: 8 }}>
-        <div><div className="stat-value num">{n(year.workouts)}</div><div className="stat-sub">אימונים</div></div>
-        <div><div className="stat-value num">{n(year.km)}</div><div className="stat-sub">ק״מ</div></div>
-        <div><div className="stat-value num">{n(year.hours)}</div><div className="stat-sub">שעות</div></div>
-        <div><div className="stat-value">{year.top_sport ? top.icon : "—"}</div><div className="stat-sub">הענף המוביל: {year.top_sport ? top.label : "—"}</div></div>
-      </div>
+    <>
+      <HeroCard
+        kicker="השנה שלי · 365 הימים האחרונים"
+        title={year.top_sport ? <>{top.icon} {top.label} מובילה</> : "השנה שלך באימונים"}
+        sub={year.best_month ? <>החודש החזק: {monthName(year.best_month)} · <span className="num">{year.best_month_hours}</span> ש׳</> : undefined}
+        stats={[
+          { value: <span className="num">{n(year.workouts)}</span>, label: "אימונים" },
+          { value: <span className="num">{n(year.km)}</span>, label: "ק״מ" },
+          { value: <span className="num">{n(year.hours)}</span>, label: "שעות" },
+        ]}
+      >
+        {total > 0 && (
+          <div className="sport-split" dir="ltr" aria-hidden="true" style={{ marginTop: 18 }}>
+            {shown.map((s) => <span key={s.key} style={{ flex: year.hours_by_sport[s.key], background: s.color }} />)}
+          </div>
+        )}
+      </HeroCard>
       {total > 0 && (
-        <>
-          <div className="split-bar" dir="ltr" aria-hidden="true">
-            {SPORTS.filter((s) => year.hours_by_sport[s.key] > 0).map((s) => (
-              <span key={s.key} style={{ flex: year.hours_by_sport[s.key], background: s.color }} />
+        <Card title="לפי ענף" caption="איך מתחלקות שעות האימון של השנה.">
+          <ul className="list">
+            {shown.map((s) => (
+              <li key={s.key}>
+                <span className="row-start">
+                  <span className="icon-circle" style={{ "--tone": s.color } as CSSProperties}>{s.icon}</span>
+                  {s.label}
+                </span>
+                <span><strong className="num">{Math.round((100 * year.hours_by_sport[s.key]) / total)}%</strong> <span className="stat-sub num">{n(Math.round(year.hours_by_sport[s.key]))} ש׳</span></span>
+              </li>
             ))}
-          </div>
-          <div className="chart-notes">
-            {SPORTS.filter((s) => year.hours_by_sport[s.key] > 0).map((s) => (
-              <span key={s.key}><i className="swatch" style={{ background: s.color }} />{s.label} <span className="num">{Math.round((100 * year.hours_by_sport[s.key]) / total)}%</span></span>
-            ))}
-          </div>
-        </>
+          </ul>
+        </Card>
       )}
-      <ul className="list" style={{ marginTop: 10 }}>
-        {year.best_month && <li><span>📅 החודש החזק</span><span>{monthName(year.best_month)} · <span className="num">{year.best_month_hours}</span> ש׳</span></li>}
-        {year.farthest && <li><span>📏 הכי רחוק</span><span><span className="num">{year.farthest.km}</span> ק״מ · {date(year.farthest.date)}</span></li>}
-        {year.longest && <li><span>⏱ הכי ארוך</span><span><span className="num">{year.longest.minutes}</span> דק׳ · {date(year.longest.date)}</span></li>}
-      </ul>
-    </section>
+      {(year.farthest || year.longest) && (
+        <div className="grid grid-2">
+          {year.farthest && <Stat icon="route" tone="var(--orange)" label="הכי רחוק" value={String(year.farthest.km)} unit="ק״מ" sub={date(year.farthest.date)} />}
+          {year.longest && <Stat icon="clock" tone="var(--sport-running)" label="הכי ארוך" value={String(year.longest.minutes)} unit="דק׳" sub={date(year.longest.date)} />}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -60,10 +73,10 @@ export function Records() {
   const { data, error } = useApi<Records>("/api/records");
   return (
     <>
-      <PageHeader kicker="שיאים והישגים" title="שיאים" subtitle="הטובים ביותר שלך, בכל ענף." />
+      <PageHeader title="שיאים" subtitle="הטובים ביותר שלך, בכל ענף." />
       <div className="grid">
         {error && <p className="stat-sub">הנתונים לא נטענו. נסה לסגור ולפתוח שוב.</p>}
-        {!data && !error && <div className="skeleton" style={{ height: 260 }} />}
+        {!data && !error && <div className="skeleton" style={{ height: 260, borderRadius: 24 }} />}
         {data && <MyYear year={data.year} />}
 
         {data && (
@@ -72,7 +85,10 @@ export function Records() {
               <ul className="list">
                 {data.personal_records.map((r) => (
                   <li key={r.key}>
-                    <span>{sportOf(r.sport).icon} {r.label}</span>
+                    <span className="row-start">
+                      <span className="icon-circle" style={{ "--tone": sportOf(r.sport).color } as CSSProperties}>{sportOf(r.sport).icon}</span>
+                      {r.label}
+                    </span>
                     <span><strong className="num">{r.value}</strong> <span className="stat-sub">{date(r.date)}</span></span>
                   </li>
                 ))}
@@ -92,7 +108,7 @@ export function Records() {
                 <div className="progress"><span style={{ width: `${Math.min(100, (100 * m.progress) / m.target)}%` }} /></div>
               </div>
             ))}
-            <p className="stat-sub">🔥 רצף נוכחי: <span className="num">{data.streak_weeks}</span> שבועות עם {data.streak_rule}+ אימונים</p>
+            <p className="stat-sub" style={{ marginBottom: 0 }}>🔥 רצף נוכחי: <span className="num">{data.streak_weeks}</span> שבועות עם {data.streak_rule}+ אימונים</p>
           </Card>
         )}
 
@@ -100,7 +116,7 @@ export function Records() {
           <Card title="קיר ההישגים" caption="כל מה שכבר הושג, מהחדש לישן.">
             <ul className="list">
               {data.reached.map((r) => (
-                <li key={`${r.text}${r.date}`}><span>{r.icon} {r.text}</span><span className="stat-sub">{date(r.date)}</span></li>
+                <li key={`${r.text}${r.date}`}><span className="row-start"><span className="icon-circle" style={{ "--tone": "var(--orange)" } as CSSProperties}>{r.icon}</span>{r.text}</span><span className="stat-sub">{date(r.date)}</span></li>
               ))}
             </ul>
           </Card>

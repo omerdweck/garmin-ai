@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { authenticate, NotMemberError } from "./api";
+import { AppBar } from "./components/AppBar";
 import { TabBar, type Tab } from "./components/TabBar";
 import { RangeProvider } from "./range";
 import { Records } from "./screens/Records";
@@ -61,6 +62,7 @@ function Message({ title, text }: { title: string; text: string }) {
   return (
     <main className="center">
       <div>
+        <div className="brand"><b>Garmin</b><span>Assistant</span></div>
         <h1>{title}</h1>
         <p>{text}</p>
       </div>
@@ -110,8 +112,9 @@ export function App() {
     <OpenActivityContext.Provider value={setActivityId}>
     <RangeProvider>
       <main className="app">
+        <AppBar name={session.name} onAlerts={() => setTab("health")} />
         {tab === "today" && <Today name={session.name} />}
-        <Suspense fallback={<div className="skeleton" style={{ height: 240, marginTop: 120 }} />}>
+        <Suspense fallback={<div className="skeleton" style={{ height: 240, marginTop: 60 }} />}>
           {tab === "workouts" && <Workouts />}
           {tab === "health" && <Health />}
           {tab === "goals" && <Goals />}

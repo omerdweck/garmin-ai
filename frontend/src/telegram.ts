@@ -20,7 +20,7 @@ type BackButton = {
 
 export type TelegramWebApp = {
   initData: string;
-  initDataUnsafe: { start_param?: string; user?: { first_name?: string } };
+  initDataUnsafe: { start_param?: string; user?: { first_name?: string; photo_url?: string } };
   colorScheme: "light" | "dark";
   version: string;
   ready(): void;

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { Chart, type Palette } from "../charts/Chart";
 import { metricLine, sleepStages, SLEEP_STAGES, type Band, type Point, type SleepNight, type Span } from "../charts/healthCharts";
+import { Icon, type IconName } from "../components/icons";
 import { HistoryBanner } from "../components/HistoryBanner";
 import { RangeSelector } from "../components/RangeSelector";
 import { Card, ChartPlaceholder, PageHeader } from "../components/ui";
@@ -15,14 +16,14 @@ type Health = {
 
 // Order, wording and color of each card. The explanation line is what makes
 // a chart readable without knowing what the metric is (plan, part C4).
-const METRICS: { key: string; name: string; caption: string; unit: string; color: string; digits?: number }[] = [
-  { key: "resting_heart_rate", name: "דופק מנוחה", caption: "ממוצע 30 הדקות הנמוכות בכל יום. נמוך יותר = לב יעיל יותר.", unit: "bpm", color: "var(--sport-cycling)" },
-  { key: "avg_hrv", name: "HRV", caption: "השונות בין פעימות בשינה. גבוה = התאוששות טובה.", unit: "ms", color: "var(--sport-running)" },
-  { key: "avg_stress_level", name: "Stress", caption: "ציון 0–100 של Garmin, מ-HRV בזמן מנוחה.", unit: "", color: "var(--sport-other)" },
-  { key: "body_battery_high", name: "שיא Body Battery", caption: "הטעינה הגבוהה ביותר בכל יום.", unit: "/100", color: "var(--sport-swimming)" },
-  { key: "intensity_minutes", name: "דקות עצימות", caption: "מתונה, ועצימה כפול 2. ההמלצה: 150 בשבוע.", unit: "דק׳", color: "var(--sport-strength)" },
-  { key: "respiration", name: "נשימה", caption: "נשימות לדקה בממוצע, בשינה.", unit: "/דק׳", color: "var(--sport-walking)", digits: 1 },
-  { key: "spo2", name: "SpO2", caption: "רוויית חמצן בדם בשינה.", unit: "%", color: "var(--accent)" },
+const METRICS: { key: string; name: string; caption: string; unit: string; color: string; icon: IconName; digits?: number }[] = [
+  { key: "resting_heart_rate", icon: "heart", name: "דופק מנוחה", caption: "ממוצע 30 הדקות הנמוכות בכל יום. נמוך יותר = לב יעיל יותר.", unit: "bpm", color: "var(--zone-5)" },
+  { key: "avg_hrv", icon: "pulse", name: "HRV", caption: "השונות בין פעימות בשינה. גבוה = התאוששות טובה.", unit: "ms", color: "var(--sport-running)" },
+  { key: "avg_stress_level", icon: "gauge", name: "Stress", caption: "ציון 0–100 של Garmin, מ-HRV בזמן מנוחה.", unit: "", color: "var(--sport-other)" },
+  { key: "body_battery_high", icon: "battery", name: "שיא Body Battery", caption: "הטעינה הגבוהה ביותר בכל יום.", unit: "/100", color: "var(--sport-swimming)" },
+  { key: "intensity_minutes", icon: "flame", name: "דקות עצימות", caption: "מתונה, ועצימה כפול 2. ההמלצה: 150 בשבוע.", unit: "דק׳", color: "var(--sport-strength)" },
+  { key: "respiration", icon: "lungs", name: "נשימה", caption: "נשימות לדקה בממוצע, בשינה.", unit: "/דק׳", color: "var(--sport-walking)", digits: 1 },
+  { key: "spo2", icon: "drop", name: "SpO2", caption: "רוויית חמצן בדם בשינה.", unit: "%", color: "var(--accent)" },
 ];
 
 const fullDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("he-IL", { day: "numeric", month: "long", year: "numeric" });
@@ -31,6 +32,7 @@ const fullDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString
 function resolve(p: Palette, color: string): string {
   const name = color.match(/--sport-(\w+)/)?.[1];
   if (name && p.sport[name]) return p.sport[name];
+  if (color.includes("--zone-5")) return p.zone5;
   return color.includes("--accent") ? p.accent : color;
 }
 
@@ -44,26 +46,28 @@ function MetricCard({ data, meta, start, end, year }: {
   const lastWeek = data.last_week;
   return (
     <section className="card">
-      <div className="metric-head">
+      <h2 className="card-title">
+        {meta.name}
+        <span style={{ color: meta.color }}><Icon name={meta.icon} size={18} stroke={2.2} /></span>
+      </h2>
+      <p className="card-caption">{meta.caption}</p>
+      <div className="pair">
         <div>
-          <h2 className="card-title">{meta.name}</h2>
-          <p className="card-caption">{meta.caption}</p>
-        </div>
-        <div className="metric-value">
-          <div className="kicker">השבוע שעבר</div>
-          <div className="stat-value num" style={{ color: meta.color }}>
-            {lastWeek === null ? "—" : lastWeek.toFixed(meta.digits ?? 0)}
-          </div>
+          <div className="kicker">ממוצע השבוע שעבר</div>
           {/* "/100" and "/דק׳" read left to right; inside Hebrew they'd flip to "100/". */}
-          <div className="stat-sub"><bdi dir="ltr">{meta.unit}</bdi></div>
+          <div className="big"><span className="num">{lastWeek === null ? "—" : lastWeek.toFixed(meta.digits ?? 0)}</span> <small><bdi dir="ltr">{meta.unit}</bdi></small></div>
         </div>
-      </div>
-      <Chart build={build} height={130} />
-      <div className="chart-notes">
         {data.band && (
-          <span><i className="swatch" style={{ background: meta.color, opacity: 0.25 }} />הנורמה שלך <bdi dir="ltr" className="num">{data.band.low}–{data.band.high}</bdi></span>
+          <div>
+            <div className="kicker">הנורמה שלך</div>
+            <div className="big"><bdi dir="ltr" className="num">{data.band.low}–{data.band.high}</bdi></div>
+          </div>
         )}
-        {data.alerts.length > 0 && <span><i className="swatch" style={{ background: "var(--zone-5)", opacity: 0.3 }} />התראה מהמאמן</span>}
+      </div>
+      <Chart build={build} height={140} />
+      <div className="chart-notes">
+        {data.band && <span><i className="swatch" style={{ background: meta.color, opacity: 0.3 }} />טווח הנורמה</span>}
+        {data.alerts.length > 0 && <span><i className="swatch" style={{ background: "var(--zone-5)", opacity: 0.35 }} />התראה מהמאמן</span>}
       </div>
     </section>
   );
@@ -74,22 +78,27 @@ function SleepCard({ data, year }: { data: Health; year: boolean }) {
   const last = data.sleep.at(-1);
   return (
     <section className="card">
-      <div className="metric-head">
+      <h2 className="card-title">
+        שינה
+        <span style={{ color: "#7c9be6" }}><Icon name="moon" size={18} stroke={2.2} /></span>
+      </h2>
+      <p className="card-caption">{year ? "ממוצע לילה בכל שבוע, לפי שלבים." : "שעות בכל לילה לפי שלבים. הקו: ציון השינה."}</p>
+      <div className="pair">
         <div>
-          <h2 className="card-title">שינה</h2>
-          <p className="card-caption">{year ? "ממוצע לילה בכל שבוע, לפי שלבים." : "שעות בכל לילה לפי שלבים, והקו: ציון השינה."}</p>
+          <div className="kicker">ממוצע השבוע שעבר</div>
+          <div className="big"><span className="num">{data.sleep_last_week_hours ?? "—"}</span> <small>שעות</small></div>
         </div>
-        <div className="metric-value">
-          <div className="kicker">השבוע שעבר</div>
-          <div className="stat-value num">{data.sleep_last_week_hours ?? "—"}</div>
-          <div className="stat-sub">שעות בלילה</div>
-        </div>
+        {last?.score != null && (
+          <div>
+            <div className="kicker">ציון הלילה האחרון</div>
+            <div className="big"><span className="num">{last.score}</span> <small>/100</small></div>
+          </div>
+        )}
       </div>
       {data.sleep.length ? <Chart build={build} height={200} /> : <p className="stat-sub">אין נתוני שינה בטווח הזה.</p>}
       {last?.bed && last.wake && (
         <p className="stat-sub" style={{ marginTop: 8 }}>
           הלילה האחרון: נרדמת ב-<span className="num">{last.bed}</span>, קמת ב-<span className="num">{last.wake}</span>
-          {last.score !== null && <> · ציון <span className="num">{last.score}</span></>}
         </p>
       )}
       <div className="chart-notes">
@@ -107,8 +116,7 @@ export function Health() {
   return (
     <>
       <PageHeader
-        kicker="בריאות ושינה"
-        title="כל יום, כל היום"
+        title="בריאות"
         subtitle={data?.since
           ? <><span className="num">{data.days_recorded.toLocaleString("he-IL")}</span> ימים מתועדים, מאז {fullDate(data.since)}</>
           : "הסיכום היומי של השעון, יום אחרי יום."}

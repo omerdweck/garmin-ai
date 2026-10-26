@@ -141,7 +141,7 @@ export function sleepStages(p: Palette, nights: SleepNight[], year: boolean): Ch
   return {
     ...base(p),
     grid: { left: 30, right: 30, top: 34, bottom: 22 },
-    legend: { top: 0, left: "center", itemWidth: 10, itemHeight: 10, textStyle: { color: p.text, fontSize: 11 } },
+    legend: { top: 0, left: "center", icon: "circle", itemWidth: 9, itemHeight: 9, textStyle: { color: p.text, fontSize: 11 } },
     xAxis: { ...axisX(p, rows.map((r) => r.date)), boundaryGap: true },
     yAxis: [
       axisY(p, { scale: false, axisLabel: { color: p.muted, fontSize: 10, formatter: "{value}ש׳" } }),
@@ -150,7 +150,7 @@ export function sleepStages(p: Palette, nights: SleepNight[], year: boolean): Ch
     tooltip: { ...(base(p).tooltip as object), axisPointer: { type: "shadow" } },
     series: [
       ...STAGES.map((s) => ({
-        name: s.label, type: "bar", stack: "sleep", barMaxWidth: 14, itemStyle: { color: s.color },
+        name: s.label, type: "bar", stack: "sleep", barMaxWidth: 14, itemStyle: { color: s.color, borderColor: p.card, borderWidth: 0.5 },
         tooltip: { valueFormatter: (v: unknown) => `${Number(v).toFixed(1)} ש׳` },
         data: rows.map((r) => +(r[s.key] / 60).toFixed(2)),
       })),

@@ -12,7 +12,7 @@ import {
 import { ActivityList } from "../components/ActivityList";
 import { HistoryBanner } from "../components/HistoryBanner";
 import { RangeSelector } from "../components/RangeSelector";
-import { Card, ChartPlaceholder, PageHeader, Stat } from "../components/ui";
+import { Card, ChartPlaceholder, PageHeader, Stat, type Delta } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useRange } from "../range";
 
@@ -26,12 +26,12 @@ const fmt = (n: number, digits = 0) =>
 
 const PREVIOUS: Record<string, string> = { week: "מהשבוע הקודם", month: "מהחודש הקודם", year: "מהשנה הקודמת" };
 
-/** "▲ 12% מהשבוע הקודם" - or nothing when there's no previous period to compare with. */
-function change(now: number, before: number, kind: string): string | undefined {
+/** "↑ 12% מהשבוע הקודם" - or nothing when there's no previous period to compare with. */
+function change(now: number, before: number, kind: string): Delta | undefined {
   if (!before) return undefined;
   const pct = Math.round(((now - before) / before) * 100);
-  if (pct === 0) return `ללא שינוי ${PREVIOUS[kind]}`;
-  return `${pct > 0 ? "▲" : "▼"} ${Math.abs(pct)}% ${PREVIOUS[kind]}`;
+  if (pct === 0) return { text: `ללא שינוי ${PREVIOUS[kind]}`, dir: "flat" };
+  return { text: `${Math.abs(pct)}% ${PREVIOUS[kind]}`, dir: pct > 0 ? "up" : "down" };
 }
 
 function Stats({ data, kind }: { data: Summary | null; kind: string }) {
@@ -39,22 +39,18 @@ function Stats({ data, kind }: { data: Summary | null; kind: string }) {
   const prev = data?.previous;
   return (
     <div className="grid grid-2">
-      <Stat label="אימונים" value={t && fmt(t.workouts)} sub={t && prev ? change(t.workouts, prev.workouts, kind) : undefined} />
-      <Stat
-        label='מרחק, ק"מ'
+      <Stat icon="bars" tone="var(--text)" label="אימונים" value={t && fmt(t.workouts)}
+        delta={t && prev ? change(t.workouts, prev.workouts, kind) : undefined} />
+      <Stat icon="route" tone="var(--orange)" label="מרחק" unit='ק"מ'
         value={t && fmt(t.distance_km, t.distance_km < 100 ? 1 : 0)}
-        sub={t && prev ? change(t.distance_km, prev.distance_km, kind) : undefined}
-      />
-      <Stat
-        label="זמן תנועה, שעות"
+        delta={t && prev ? change(t.distance_km, prev.distance_km, kind) : undefined} />
+      <Stat icon="clock" tone="var(--sport-running)" label="זמן תנועה" unit="ש׳"
         value={t && fmt(t.moving_hours, 1)}
-        sub={t ? (t.moving_hours >= 24 ? `${fmt(t.moving_hours / 24, 1)} ימים מלאים` : undefined) : undefined}
-      />
-      <Stat
-        label="טיפוס, מטר"
+        delta={t && prev ? change(t.moving_hours, prev.moving_hours, kind) : undefined}
+        sub={t && t.moving_hours >= 24 ? `${fmt(t.moving_hours / 24, 1)} ימים מלאים` : undefined} />
+      <Stat icon="mountain" tone="var(--sport-swimming)" label="טיפוס" unit="מ׳"
         value={t && fmt(t.elevation_m)}
-        sub={t && t.elevation_m >= 2000 ? `${fmt(t.elevation_m / 8849, 1)} אוורסטים` : undefined}
-      />
+        sub={t && t.elevation_m >= 2000 ? `${fmt(t.elevation_m / 8849, 1)} אוורסטים` : undefined} />
     </div>
   );
 }
@@ -105,7 +101,7 @@ export function Workouts() {
 
   return (
     <>
-      <PageHeader kicker="אימונים ועומס" title="אימונים" subtitle="כל מה שהשעון רשם, בטווח שבחרת." />
+      <PageHeader title="אימונים" subtitle="כל מה שחשוב, בעמוד אחד." />
       <HistoryBanner />
       <RangeSelector />
       <div className="grid">

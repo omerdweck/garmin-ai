@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { apiGet } from "../api";
 import { distance, duration, when } from "../format";
 import { useOpenActivity } from "../nav";
 import { SPORTS } from "../sports";
 import "../screens/activity.css";
+import { Icon } from "./icons";
 import { Card } from "./ui";
 
 export type ActivityRow = {
@@ -53,7 +54,7 @@ export function ActivityList() {
             return (
               <li key={a.id}>
                 <button onClick={() => open(a.id)}>
-                  <span className="activity-icon" style={{ background: sport.color }}>{sport.icon}</span>
+                  <span className="icon-circle" style={{ "--tone": sport.color } as CSSProperties}>{sport.icon}</span>
                   <span className="activity-text">
                     <span className="activity-name">{a.name || sport.label}{a.manual ? " ✍️" : ""}</span>
                     <span className="stat-sub">{when(a.start)}</span>
@@ -62,7 +63,7 @@ export function ActivityList() {
                     {a.meters > 0 && <span className="num">{distance(a.meters, a.sport)}</span>}
                     <span className="stat-sub num">{duration(a.seconds)}</span>
                   </span>
-                  <span className="chevron" aria-hidden="true">‹</span>
+                  <span className="chevron" aria-hidden="true"><Icon name="chevronLeft" size={18} /></span>
                 </button>
               </li>
             );
