@@ -42,7 +42,6 @@ BTN_PLAN = "🗓 לו״ז אימונים שבועי"
 BTN_COACH = "💬 שיחה עם המאמן"
 BTN_SETTINGS = "⚙️ הגדרות"
 BTN_EXIT_CHAT = "⬅️ חזרה לתפריט"
-BTN_BUILD_WORKOUT = "🏋️ בנה אימון"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
@@ -51,7 +50,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [BTN_PLAN, BTN_CALORIES],
         [BTN_ADD_ACTIVITY, BTN_SYNC],
         [BTN_COACH, BTN_SETTINGS],
-        [BTN_BUILD_WORKOUT, BTN_RECORDS],
+        [BTN_RECORDS],
     ],
     resize_keyboard=True,
 )
@@ -61,7 +60,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 # one apart from something the user typed.
 MENU_BUTTONS = {
     BTN_METRICS, BTN_ACTIVITIES, BTN_WEEK, BTN_RACES, BTN_PLAN, BTN_CALORIES,
-    BTN_RECORDS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT, BTN_BUILD_WORKOUT,
+    BTN_RECORDS, BTN_ADD_ACTIVITY, BTN_SYNC, BTN_COACH, BTN_SETTINGS, BTN_EXIT_CHAT,
 }
 
 # Labels the buttons had before they were renamed. Telegram keeps showing a
@@ -69,7 +68,10 @@ MENU_BUTTONS = {
 # will still tap these - they must keep working, not fall through to the coach.
 LEGACY_BTN_WEEK = "📅 השבוע שלי"
 LEGACY_BTN_PLAN = "📋 התוכנית שלי"
-MENU_BUTTONS |= {LEGACY_BTN_WEEK, LEGACY_BTN_PLAN}
+# Merged into "➕ הוספת אימון" (its "🏋️ אימון חדש עם המאמן" choice). Still
+# answered, by the same menu, for keyboards that haven't refreshed yet.
+LEGACY_BTN_BUILD_WORKOUT = "🏋️ בנה אימון"
+MENU_BUTTONS |= {LEGACY_BTN_WEEK, LEGACY_BTN_PLAN, LEGACY_BTN_BUILD_WORKOUT}
 
 # Shown only while in chat mode, so the way out is always one visible tap -
 # a mode with no obvious exit is a mode users get stuck in.

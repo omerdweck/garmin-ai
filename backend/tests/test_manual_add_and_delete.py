@@ -62,7 +62,11 @@ def test_future_hands_over_to_the_builder_for_a_day(make_user, monkeypatch):
     monkeypatch.setattr(bot.settings, "anthropic_api_key", "sk-test")
     user = make_user()
     query, _, context = _press(user, "manual:future", {bot.MANUAL_KEY: {"type": "running"}})
-    days = [b for b in _buttons(query.edit_message_text.call_args.kwargs["reply_markup"]) if b.callback_data.startswith("wkb:home:")]
+    # Dated days only; "wkb:home:0" is the "no day yet" button, tested on its own.
+    days = [
+        b for b in _buttons(query.edit_message_text.call_args.kwargs["reply_markup"])
+        if b.callback_data.startswith("wkb:home:") and b.callback_data != "wkb:home:0"
+    ]
     assert len(days) == bot.FUTURE_DAYS
     assert days[0].text == "היום" and days[1].text == "מחר"
     assert bot.MANUAL_KEY not in context.user_data  # nothing half-entered is left behind
@@ -141,3 +145,35 @@ def test_malformed_delete_is_ignored(make_user):
     query, _, _ = _press(make_user(), "manual:delok:abc")
     # Falls through to the normal steps, which don't know "delok" - nothing happens.
     assert not query.edit_message_text.called
+
+
+# --- one button instead of two -------------------------------------------------
+
+
+def test_the_main_keyboard_has_one_add_button():
+    from app.bot.common import BTN_ADD_ACTIVITY, LEGACY_BTN_BUILD_WORKOUT, MAIN_KEYBOARD
+
+    labels = [button.text for row in MAIN_KEYBOARD.keyboard for button in row]
+    assert BTN_ADD_ACTIVITY in labels
+    assert LEGACY_BTN_BUILD_WORKOUT not in labels
+
+
+def test_the_old_build_button_still_opens_the_add_menu():
+    from app.bot import build_application
+    from app.bot.common import LEGACY_BTN_BUILD_WORKOUT, MENU_BUTTONS
+
+    assert LEGACY_BTN_BUILD_WORKOUT in MENU_BUTTONS  # never sent to the coach as a question
+    callbacks = [
+        h.callback
+        for group in build_application().handlers.values()
+        for h in group
+        if LEGACY_BTN_BUILD_WORKOUT in (getattr(getattr(h, "filters", None), "strings", None) or ())
+    ]
+    assert callbacks == [bot.add_activity_start]
+
+
+def test_new_workout_can_be_left_without_a_day(make_user, monkeypatch):
+    monkeypatch.setattr(bot.settings, "anthropic_api_key", "sk-test")
+    query, _, _ = _press(make_user(), "manual:future")
+    data = [b.callback_data for b in _buttons(query.edit_message_text.call_args.kwargs["reply_markup"])]
+    assert "wkb:home:0" in data

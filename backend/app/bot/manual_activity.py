@@ -1,6 +1,8 @@
 """
-"➕ הוספת אימון": first a choice between a workout already done and one to
-do later, then either the manual entry below or the workout builder.
+"➕ הוספת אימון": the one way in to adding a workout. First a choice between
+a workout already done and a new one built with the coach, then either the
+manual entry below or the workout builder (which used to have its own
+"🏋️ בנה אימון" button - the same thing behind a second door).
 
 Also the delete of a manually entered workout - from the message that saved
 it, and from the workout's page under "🏃 האימונים שלי".
@@ -75,7 +77,7 @@ async def add_activity_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("✅ אימון שכבר עשיתי", callback_data="manual:past")],
-                [InlineKeyboardButton("📅 אימון לעשות בהמשך", callback_data="manual:future")],
+                [InlineKeyboardButton("🏋️ אימון חדש עם המאמן", callback_data="manual:future")],
                 [InlineKeyboardButton("ביטול", callback_data="manual:abort")],
             ]
         ),
@@ -124,9 +126,11 @@ async def _start_future(query) -> None:
     days = [today + timedelta(days=i) for i in range(FUTURE_DAYS)]
     buttons = [InlineKeyboardButton(day_label(d, today), callback_data=f"wkb:home:{encode_day(d)}") for d in days]
     rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    # No day: the builder's own default - saved as a draft, a day picked later.
+    rows.append([InlineKeyboardButton("בלי יום, אבחר אחר כך", callback_data=f"wkb:home:{encode_day(None)}")])
     rows.append([InlineKeyboardButton("ביטול", callback_data="manual:abort")])
     await query.edit_message_text(
-        "📅 *אימון לעשות בהמשך*\n\n"
+        "🏋️ *אימון חדש עם המאמן*\n\n"
         "לאיזה יום? אחרי שהמאמן יבנה אותו, תוכל לשלוח אותו לשעון.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(rows),

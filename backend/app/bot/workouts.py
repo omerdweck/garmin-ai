@@ -1,7 +1,7 @@
 """
 Workouts in Telegram: the preview under a workout the coach built, choosing
 its day, saving it in the bot or sending it to the watch, files - and the
-"🏋️ בנה אימון" builder.
+workout builder, reached from "➕ הוספת אימון" → "🏋️ אימון חדש עם המאמן".
 
 Nothing here talks to Garmin. Sending, the .fit file and removing are
 queued to the worker; only the trainer files (.zwo/.erg/.mrc), which are
@@ -21,9 +21,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from app.bot.common import BTN_BUILD_WORKOUT, CHAT_MODE_KEY, _find_user, _reply, _require_active  # noqa: F401
+from app.bot.common import CHAT_MODE_KEY, _find_user, _reply, _require_active  # noqa: F401
 from app.core import clock
-from app.core.config import settings
 from app.db.session import engine
 from app.models.plan_session import DAY_NAMES_HE, week_index
 from app.models.workout import STATUS_DRAFT, STATUS_PLANNED, STATUS_SENT, StoredWorkout
@@ -439,15 +438,6 @@ def focus_keyboard(sport: str, mode: str, amount: int, day_code: str) -> InlineK
 def _title(sport: str, day: Optional[date]) -> str:
     emoji, label = SPORT_LABELS[sport]
     return f"{emoji} {label}" + (f" · {day_label(day)}" if day else "")
-
-
-async def build_workout_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await _require_active(update) is None:
-        return
-    if not settings.is_claude_configured:
-        await update.message.reply_text("🤖 המאמן החכם לא מחובר כרגע, ולכן אי אפשר לבנות אימון.")
-        return
-    await update.message.reply_text("🏋️ *בניית אימון*\n\nאיזה אימון?", parse_mode="Markdown", reply_markup=sport_keyboard())
 
 
 def builder_request(sport: str, mode: str, amount: int, focus: str, day: Optional[date] = None) -> str:
