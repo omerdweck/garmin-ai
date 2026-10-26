@@ -34,6 +34,7 @@ from app.core.garmin_client import (
 from app.core.telegram_client import send_telegram_document, send_telegram_message
 from app.db.session import engine
 from app.models.garmin_account import GarminAccount
+from app.models import notification as notification_kinds
 from app.models.plan_session import week_index
 from app.models.user import User
 from app.services.calorie_tracking import (
@@ -59,6 +60,7 @@ from app.services.sync_lock import release as release_sync_lock
 from app.services.sync_lock import user_sync_lock
 from app.services.sync_lock import named_lock
 from app.services import history_import
+from app.services import notifications
 from app.models.history_import import STATUS_PAUSED, HistoryImport
 from app.services.metrics_view import (
     WATCH_STALE_HOURS,
@@ -95,10 +97,15 @@ def _warn_if_watch_stale(session: Session, user: User) -> None:
         if already > stamp:
             return  # already warned about this same episode
 
-    send_telegram_message(user.telegram_chat_id, format_watch_sync_line(session, user.id).strip())
+    text = format_watch_sync_line(session, user.id).strip()
+    send_telegram_message(user.telegram_chat_id, text)
     account.watch_stale_notified_at = datetime.now(timezone.utc)
     session.add(account)
     session.commit()
+    # Keyed by the upload it is about: one warning per episode, as above.
+    notifications.record_safely(
+        session, user.id, notification_kinds.KIND_WATCH, text, f"watch_stale:{stamp.isoformat()}"
+    )
 
 
 # Hard ceilings per task. A Garmin call that never returns used to hold a
@@ -189,9 +196,11 @@ def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
             # this fires for both a manual /sync and the scheduled sync.
             user = session.get(User, user_id)
             if user is not None and user.telegram_chat_id is not None:
-                send_telegram_message(
-                    user.telegram_chat_id,
-                    "🔌 החיבור לגרמין פג תוקף. שלח /start כדי להתחבר מחדש.",
+                text = "🔌 החיבור לגרמין פג תוקף. שלח /start כדי להתחבר מחדש."
+                send_telegram_message(user.telegram_chat_id, text)
+                notifications.record_safely(
+                    session, user.id, notification_kinds.KIND_ACCOUNT, text,
+                    f"garmin_auth:{clock.today().isoformat()}",
                 )
             return
 
@@ -219,7 +228,16 @@ def _sync_one_user(self, user_id: int, notify_on_success: bool = False) -> None:
             broken_records = []
 
         if broken_records:
-            send_telegram_message(user.telegram_chat_id, format_broken_records(broken_records))
+            text = format_broken_records(broken_records)
+            send_telegram_message(user.telegram_chat_id, text)
+            # The record itself is the key: the same number cannot be broken twice.
+            key = "|".join(
+                f"{r.get('sport')}:{r.get('record_type')}:{r.get('value')}" for r in broken_records
+            )
+            notifications.record_safely(
+                session, user.id, notification_kinds.KIND_RECORD, text, f"records:{key}",
+                notifications.tab_link("records"),
+            )
 
         # Anomalies are checked on every sync - it is a few queries over data
         # already stored - and announced through the same pipeline, which
@@ -494,6 +512,10 @@ def send_daily_summary_task(self, user_id: int) -> None:
         # stay quiet than to send an empty-handed daily message.
         if summary:
             send_telegram_message(user.telegram_chat_id, summary)
+            notifications.record_safely(
+                session, user.id, notification_kinds.KIND_DAILY_SUMMARY, summary,
+                f"daily_summary:{clock.today().isoformat()}", notifications.tab_link("today"),
+            )
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=120, soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
@@ -524,16 +546,20 @@ def send_calorie_reminder_task(self, user_id: int) -> None:
             if user.calorie_abandon_prompted_at is not None:
                 return
 
-            send_telegram_message(
-                user.telegram_chat_id,
+            text = (
                 f"🍽 *לא רשמת קלוריות כבר {silent_days} ימים*\n\n"
                 "אם המעקב לא מסתדר לך - אפשר לכבות אותו, והרישומים יישמרו.\n"
                 "אם כן, פשוט תמשיך להזין ואפסיק לשאול 🙂\n\n"
-                "לכיבוי: 🍽 קלוריות ← ⚙️ הגדרות מעקב",
+                "לכיבוי: 🍽 קלוריות ← ⚙️ הגדרות מעקב"
             )
+            send_telegram_message(user.telegram_chat_id, text)
             user.calorie_abandon_prompted_at = datetime.now(timezone.utc)
             session.add(user)
             session.commit()
+            notifications.record_safely(
+                session, user.id, notification_kinds.KIND_REMINDER, text,
+                f"calorie_abandon:{clock.today().isoformat()}",
+            )
             return
 
         consumed = consumed_on(session, user.id)
@@ -550,6 +576,11 @@ def send_calorie_reminder_task(self, user_id: int) -> None:
                 "לחץ 🍽 קלוריות ← ➕ הוספת ארוחה"
             )
         send_telegram_message(user.telegram_chat_id, body)
+        # Up to three a day, one per reminder hour - the hour tells them apart.
+        notifications.record_safely(
+            session, user.id, notification_kinds.KIND_REMINDER, body,
+            f"calorie_reminder:{clock.today().isoformat()}:{clock.now_local().hour}",
+        )
 
 
 @celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
@@ -604,6 +635,10 @@ def send_weekly_summary_task(self, user_id: int) -> None:
         # summary of nothing.
         if summary:
             send_telegram_message(user.telegram_chat_id, summary)
+            notifications.record_safely(
+                session, user.id, notification_kinds.KIND_WEEKLY_REPORT, summary,
+                f"weekly_report:{clock.today().isoformat()}", notifications.tab_link("workouts"),
+            )
 
 
 @celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
@@ -692,6 +727,18 @@ def deliver_coach_event_task(self, event_id: int) -> None:
             logger.exception("Coach event %s failed", event_id)
             raise self.retry(exc=exc)
     logger.info("Coach event %s: %s", event_id, outcome)
+
+
+@celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)
+def backfill_notifications_task(user_id: int) -> None:
+    """
+    Queued by the Mini App (services/notifications.request_backfill), which
+    cannot read chat_message itself. Idempotent, so a second run is harmless.
+    """
+    with Session(engine) as session:
+        added = notifications.backfill_from_coach_events(session, user_id)
+    if added:
+        logger.info("Notifications backfill for user %s: %s added", user_id, added)
 
 
 @celery_app.task(soft_time_limit=SMALL_SOFT_LIMIT, time_limit=SMALL_HARD_LIMIT)

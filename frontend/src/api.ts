@@ -3,7 +3,7 @@
  *
  * 1. authenticate() sends Telegram's signed initData to /api/auth and gets
  *    back a JWT that is valid for an hour.
- * 2. apiGet() sends that token with every request. If it has expired
+ * 2. apiGet() / apiPost() send that token with every request. If it has expired
  *    (401), it asks for a new one once and repeats the request.
  *
  * The token lives only in memory, never in localStorage: closing the Mini
@@ -33,9 +33,12 @@ export async function authenticate(): Promise<AuthResult> {
   return { first_name: body.first_name, garmin_linked: body.garmin_linked };
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const send = () =>
-    fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    fetch(path, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
 
   let res = await send();
   if (res.status === 401 && tg) {
@@ -46,4 +49,17 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (res.status === 403) throw new NotMemberError();
   if (!res.ok) throw new Error(`${path}: ${res.status}`);
   return (await res.json()) as T;
+}
+
+export function apiGet<T>(path: string): Promise<T> {
+  return request<T>(path);
+}
+
+/** The same, with a JSON body - for the few things the page changes (marking notifications read). */
+export function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }

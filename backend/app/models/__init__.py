@@ -18,6 +18,7 @@ from app.models.history_import import HistoryImport  # noqa: F401
 from app.models.join_request import JoinRequest  # noqa: F401
 from app.models.meal_plan import MealOption, MealPlan  # noqa: F401
 from app.models.metric_alert import MetricAlert, MetricBaseline  # noqa: F401
+from app.models.notification import Notification  # noqa: F401
 from app.models.personal_record import PersonalRecord  # noqa: F401
 from app.models.plan_session import PlanSession  # noqa: F401
 from app.models.training_plan import TrainingPlan  # noqa: F401

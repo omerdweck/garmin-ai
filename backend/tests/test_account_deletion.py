@@ -19,6 +19,7 @@ from app.models.daily_metric import DailyMetric
 from app.models.history_import import HistoryImport
 from app.models.join_request import STATUS_APPROVED, JoinRequest
 from app.models.meal_plan import MealOption, MealPlan
+from app.models.notification import Notification
 from app.models.personal_record import PersonalRecord
 from app.models.plan_session import PlanSession
 from app.models.training_plan import TrainingPlan
@@ -34,6 +35,7 @@ def _fill_every_table(session, make_activity, user):
     session.add(DailyMetric(user_id=user.id, date=date.today()))
     session.add(ChatMessage(user_id=user.id, role="user", content="hi"))
     session.add(CoachEvent(user_id=user.id, kind="post_workout", key="post_workout:1"))
+    session.add(Notification(user_id=user.id, kind="post_workout", text="כל הכבוד!", source_key="coach_event:1"))
     session.add(AthleteProfile(user_id=user.id, limitations="ברך"))
     session.add(CoachNote(user_id=user.id, text="מעדיף בוקר"))
     session.add(Achievement(user_id=user.id, key="first:running"))
