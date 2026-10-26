@@ -125,7 +125,7 @@ def schedule_keyboard(week, offset: int, has_template: bool) -> InlineKeyboardMa
                 f"🔍 {workout.name} · {day_label(day.day, today)}", callback_data=f"wk:open:{workout.id}"
             )])
 
-    rows.append([InlineKeyboardButton("🗓 בניית לו״ז עם המאמן", callback_data="plan:new")])
+    rows.append([InlineKeyboardButton("🗓 בניית לו״ז אימונים שבועי עם המאמן", callback_data="plan:new")])
     if has_template:
         rows.append([InlineKeyboardButton("🗑 מחיקת התבנית הישנה", callback_data="plan:delete")])
     return InlineKeyboardMarkup(rows)
