@@ -164,6 +164,25 @@ def _record_usage(session: Session, user_id: int, kind: str, model: str, usage) 
         session.rollback()
 
 
+# The short, templated messages - one per user per day or per workout, written
+# to explicit rules. They go to the light model; everything that needs
+# judgement (the conversation with its tools, the weekly reading) stays on
+# the main one.
+LIGHT_KINDS = {"daily_summary", "post_workout", "anomaly"}
+
+# Room for the model's own thinking as well as the message: on the 5.5
+# models thinking is on by default and counts toward max_tokens, so the old
+# ceilings sized for text alone (400-600) could cut a message off mid-way.
+# Unused room costs nothing.
+LIGHT_MAX_TOKENS = 2000
+# The weekly paragraph, on the main model at medium effort - same reasoning.
+WEEKLY_MAX_TOKENS = 2000
+
+
+def model_for(kind: str) -> str:
+    return settings.claude_model_light if kind in LIGHT_KINDS else settings.claude_model
+
+
 def _call_claude(
     client: anthropic.Anthropic,
     *,
@@ -1185,7 +1204,7 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
             session=session,
             user_id=user.id,
             kind="chat",
-            model=settings.claude_model,
+            model=model_for("chat"),
             max_tokens=CHAT_MAX_TOKENS,
             system=system,
             tools=TOOLS,
@@ -1221,7 +1240,12 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
         messages.append({"role": "user", "content": tool_results})
 
     reply = _text_of(response)
-    if not reply or response.stop_reason in ("tool_use", "max_tokens"):
+    if response.stop_reason == "refusal":
+        # The 5.5 models decline some requests outright; asking again with
+        # tools off would only be declined again. Say so plainly instead.
+        logger.info("Coach turn for user %s was declined by the model", user.id)
+        reply = reply or "את זה אני לא יכול לענות 🙏 אפשר לשאול על האימונים, השינה או המדדים שלך."
+    elif not reply or response.stop_reason in ("tool_use", "max_tokens"):
         # The turn ran out of rounds or of output with nothing said - the
         # athlete would see an error although the work (a saved workout, a
         # week) may well be done. One more call, tools off, says what it was.
@@ -1318,8 +1342,8 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
         session=session,
         user_id=user.id,
         kind="daily_summary",
-        model=settings.claude_model,
-        max_tokens=600,
+        model=model_for("daily_summary"),
+        max_tokens=LIGHT_MAX_TOKENS,
         system=[
             {
                 "type": "text",
@@ -1373,8 +1397,8 @@ def generate_weekly_summary(session: Session, user: User) -> Optional[str]:
         session=session,
         user_id=user.id,
         kind="weekly_summary",
-        model=settings.claude_model,
-        max_tokens=500,
+        model=model_for("weekly_summary"),
+        max_tokens=WEEKLY_MAX_TOKENS,
         system=[
             {
                 "type": "text",
@@ -1408,7 +1432,7 @@ def generate_post_workout_note(session: Session, user: User, facts: dict) -> Opt
     shown above it by Python (format_activity_detail), so the model only
     adds what they do not say on their own - and is told not to repeat them.
 
-    Low effort and a small ceiling: one message per workout per user is the
+    Low effort, on the light model: one message per workout per user is the
     most frequent AI call the coach makes on its own initiative.
     """
     client = _client()
@@ -1417,8 +1441,8 @@ def generate_post_workout_note(session: Session, user: User, facts: dict) -> Opt
         session=session,
         user_id=user.id,
         kind="post_workout",
-        model=settings.claude_model,
-        max_tokens=400,
+        model=model_for("post_workout"),
+        max_tokens=LIGHT_MAX_TOKENS,
         system=[
             {
                 "type": "text",
@@ -1450,8 +1474,8 @@ def generate_anomaly_note(session: Session, user: User, facts: dict) -> Optional
         session=session,
         user_id=user.id,
         kind="anomaly",
-        model=settings.claude_model,
-        max_tokens=500,
+        model=model_for("anomaly"),
+        max_tokens=LIGHT_MAX_TOKENS,
         system=[
             {
                 "type": "text",
