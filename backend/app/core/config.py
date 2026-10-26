@@ -93,7 +93,13 @@ class Settings(BaseSettings):
     # Sonnet's ~$17 for work that is summarising health metrics and drafting a
     # training plan - not the kind of reasoning that pays for the top tier.
     # Override in .env to try another tier; nothing else has to change.
-    claude_model: str = "claude-sonnet-5"
+    # Used for the coach conversation (tools, workout and plan building) and
+    # the weekly summary - the calls where judgement shows.
+    claude_model: str = "claude-sonnet-5-5"
+    # The short templated messages: daily summary, post-workout note, anomaly
+    # alert. Most of the volume, following explicit rules - Haiku writes them
+    # at ~1/20 of Sonnet's price. See app/core/claude_client.py model_for().
+    claude_model_light: str = "claude-haiku-5-5"
 
     @property
     def is_claude_configured(self) -> bool:

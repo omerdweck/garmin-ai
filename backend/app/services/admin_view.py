@@ -46,7 +46,7 @@ def format_admin_summary(session: Session) -> str:
         _rtl(f"משתמשים: *{signup['users']}/{signup['max_users']}*"),
         _rtl(f"מחוברים לגרמין: *{linked}*"),
         _rtl(f"עלות החודש: *${total_cost:.2f}*"),
-        _rtl(f"מודל: {settings.claude_model}"),
+        _rtl(f"מודל: {settings.claude_model} · הודעות קצרות: {settings.claude_model_light}"),
         "",
     ]
 
