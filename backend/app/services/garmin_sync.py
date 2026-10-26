@@ -138,6 +138,17 @@ def _apply_daily_metric(session: Session, user_id: int, target_date: date_type, 
     metric.body_battery_low = summary.get("bodyBatteryLowestValue")
     metric.moderate_intensity_minutes = summary.get("moderateIntensityMinutes")
     metric.vigorous_intensity_minutes = summary.get("vigorousIntensityMinutes")
+    # The goals behind the home screen's activity rings. dailyStepGoal is a
+    # documented field of this response (garminconnect's typed DailyStats
+    # models it); intensityMinutesGoal is not modelled there - the weekly
+    # intensity endpoint calls its goal "weeklyGoal" - so it is read on
+    # trust and may simply never arrive. Either way only a value Garmin
+    # actually sent is written: a missing goal must not blank a stored one,
+    # and the reader falls back to the latest known goal, then a default.
+    if summary.get("dailyStepGoal") is not None:
+        metric.daily_step_goal = summary.get("dailyStepGoal")
+    if summary.get("intensityMinutesGoal") is not None:
+        metric.intensity_minutes_goal = summary.get("intensityMinutesGoal")
 
     metric.sleep_duration_minutes = _seconds_to_minutes(sleep_dto.get("sleepTimeSeconds"))
     metric.deep_sleep_minutes = _seconds_to_minutes(sleep_dto.get("deepSleepSeconds"))

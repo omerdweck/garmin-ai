@@ -41,6 +41,13 @@ class DailyMetric(SQLModel, table=True):
     body_battery_low: Optional[int] = None
     moderate_intensity_minutes: Optional[int] = None
     vigorous_intensity_minutes: Optional[int] = None
+    # The goals Garmin sets for the person, from the same daily summary. The
+    # step goal moves every day under Garmin's Auto Goal, so it is kept per
+    # day like the steps themselves; the intensity goal is weekly (150 by
+    # default) but arrives on each day's summary. Both None when Garmin
+    # didn't send one - readers fall back to the latest known goal.
+    daily_step_goal: Optional[int] = None
+    intensity_minutes_goal: Optional[int] = None
 
     # from Garmin's sleep endpoint
     sleep_duration_minutes: Optional[int] = None
