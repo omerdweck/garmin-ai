@@ -141,3 +141,35 @@ def test_malformed_delete_is_ignored(make_user):
     query, _, _ = _press(make_user(), "manual:delok:abc")
     # Falls through to the normal steps, which don't know "delok" - nothing happens.
     assert not query.edit_message_text.called
+
+
+# --- one button instead of two -------------------------------------------------
+
+
+def test_the_main_keyboard_has_one_add_button():
+    from app.bot.common import BTN_ADD_ACTIVITY, LEGACY_BTN_BUILD_WORKOUT, MAIN_KEYBOARD
+
+    labels = [button.text for row in MAIN_KEYBOARD.keyboard for button in row]
+    assert BTN_ADD_ACTIVITY in labels
+    assert LEGACY_BTN_BUILD_WORKOUT not in labels
+
+
+def test_the_old_build_button_still_opens_the_add_menu():
+    from app.bot import build_application
+    from app.bot.common import LEGACY_BTN_BUILD_WORKOUT, MENU_BUTTONS
+
+    assert LEGACY_BTN_BUILD_WORKOUT in MENU_BUTTONS  # never sent to the coach as a question
+    callbacks = [
+        h.callback
+        for group in build_application().handlers.values()
+        for h in group
+        if LEGACY_BTN_BUILD_WORKOUT in (getattr(getattr(h, "filters", None), "strings", None) or ())
+    ]
+    assert callbacks == [bot.add_activity_start]
+
+
+def test_new_workout_can_be_left_without_a_day(make_user, monkeypatch):
+    monkeypatch.setattr(bot.settings, "anthropic_api_key", "sk-test")
+    query, _, _ = _press(make_user(), "manual:future")
+    data = [b.callback_data for b in _buttons(query.edit_message_text.call_args.kwargs["reply_markup"])]
+    assert "wkb:home:0" in data

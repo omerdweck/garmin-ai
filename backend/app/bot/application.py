@@ -28,14 +28,14 @@ from app.bot.activities import on_activity_detail, on_activity_type, on_activity
 from app.bot.admin import admin
 from app.bot.calories import on_calorie_reminder, on_calorie_step, show_calories
 from app.bot.coach import enter_chat_mode, exit_chat_mode, on_talk_about_it, show_menu, talk_to_coach
-from app.bot.common import LEGACY_BTN_PLAN, LEGACY_BTN_WEEK, BTN_ACTIVITIES, BTN_ADD_ACTIVITY, BTN_BUILD_WORKOUT, BTN_CALORIES, BTN_COACH, BTN_EXIT_CHAT, BTN_METRICS, BTN_PLAN, BTN_RACES, BTN_RECORDS, BTN_SETTINGS, BTN_SYNC, BTN_WEEK
+from app.bot.common import LEGACY_BTN_PLAN, LEGACY_BTN_WEEK, BTN_ACTIVITIES, BTN_ADD_ACTIVITY, LEGACY_BTN_BUILD_WORKOUT, BTN_CALORIES, BTN_COACH, BTN_EXIT_CHAT, BTN_METRICS, BTN_PLAN, BTN_RACES, BTN_RECORDS, BTN_SETTINGS, BTN_SYNC, BTN_WEEK
 from app.bot.manual_activity import add_activity_start, on_manual_step, on_manual_text
 from app.bot.metrics import _quick_lookup, on_metric_drilldown, show_metrics, sync_now
 from app.bot.onboarding import ASK_EMAIL, ASK_PASSWORD, AWAITING_TERMS, ask_password, cancel, do_link, on_join_decision, on_join_request, on_terms_response, start
 from app.bot.profile import on_profile_action, show_profile
 from app.bot.plans import on_plan_action, on_plan_cancel
 from app.bot.schedule import on_schedule_nav, on_week_review, show_schedule
-from app.bot.workouts import build_workout_menu, on_builder_step, on_workout_action
+from app.bot.workouts import on_builder_step, on_workout_action
 from app.bot.preferences import on_account_action, on_notify_setting, on_settings_action, on_summary_hour, on_weekly_setting, show_settings
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ def build_application() -> Application:
         (BTN_COACH, enter_chat_mode),
         (BTN_SETTINGS, show_settings),
         (BTN_EXIT_CHAT, exit_chat_mode),
-        (BTN_BUILD_WORKOUT, build_workout_menu),
+        (LEGACY_BTN_BUILD_WORKOUT, add_activity_start),
     ):
         application.add_handler(MessageHandler(filters.Text([button_text]), handler))
 
