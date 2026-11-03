@@ -30,7 +30,7 @@ def run_streams(km=5.0, seconds_per_km=300, hr_start=140, hr_end=140, every=5):
     for t in range(0, total + 1, every):
         d = t * speed
         hr = hr_start + (hr_end - hr_start) * t / total
-        rows.append({"metrics": [t, d, hr, speed, 10 + d / 100, START[0] + d / M_PER_DEG_LAT, START[1], 170]})
+        rows.append({"metrics": [t, d, hr, speed, 10 + d / 100, START[0] + d / M_PER_DEG_LAT, START[1], 85]})
     return {
         "metricDescriptors": [{"metricsIndex": i, "key": k} for i, k in enumerate(keys)],
         "activityDetailMetrics": rows,
@@ -82,6 +82,26 @@ def test_cardiac_drift():
     drifting = ad.build_detail(run_streams(km=6, hr_start=140, hr_end=160), {}, [], "running")
     assert steady["drift"] == pytest.approx(0, abs=0.5)
     assert drifting["drift"] > 4
+
+
+def test_run_cadence_counts_both_feet():
+    # Garmin's directRunCadence is one foot (85); the page shows steps a minute.
+    detail = ad.build_detail(run_streams(km=1), {}, [], "running")
+    assert set(detail["points"]["cad"]) == {170}
+
+
+def test_full_cadence_is_used_as_is():
+    streams = run_streams(km=1)
+    streams["metricDescriptors"].append({"metricsIndex": 8, "key": "directDoubleCadence"})
+    for row in streams["activityDetailMetrics"]:
+        row["metrics"].append(168)
+    assert set(ad.build_detail(streams, {}, [], "running")["points"]["cad"]) == {168}
+
+
+def test_bike_cadence_is_not_doubled():
+    streams = run_streams(km=1)
+    streams["metricDescriptors"][7]["key"] = "directBikeCadence"
+    assert set(ad.build_detail(streams, {}, [], "cycling")["points"]["cad"]) == {85}
 
 
 def test_no_drift_for_short_runs():
