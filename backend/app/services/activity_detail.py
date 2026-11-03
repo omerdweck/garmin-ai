@@ -135,6 +135,23 @@ def _drift(t: list, hr: list, speed: list) -> Optional[float]:
     return round((cost(second) / cost(first) - 1) * 100, 1)
 
 
+FOOT_SPORTS = {"running", "walking", "hiking"}
+
+
+def _cadence(rows: list, index: dict, sport: str) -> list:
+    """
+    Steps per minute on foot, revolutions per minute on a bike. Garmin's
+    directRunCadence counts one foot only (~80 for a run that is really ~160
+    steps a minute), so it is doubled when the full count isn't there.
+    """
+    if sport in FOOT_SPORTS:
+        full = _column(rows, index, "directDoubleCadence")
+        if full:
+            return full
+        return [c * 2 if c is not None else None for c in _column(rows, index, "directRunCadence")]
+    return _column(rows, index, "directBikeCadence", "directDoubleCadence", "directRunCadence")
+
+
 def _laps(laps: dict) -> tuple[list, list]:
     out, lengths = [], []
     for lap in (laps or {}).get("lapDTOs") or []:
@@ -180,7 +197,7 @@ def build_detail(streams: dict, laps: dict, zones, sport: str) -> dict:
     hr = _column(rows, index, "directHeartRate")
     speed = _column(rows, index, "directSpeed")
     elev = _column(rows, index, "directElevation")
-    cad = _column(rows, index, "directRunCadence", "directDoubleCadence", "directBikeCadence")
+    cad = _cadence(rows, index, sport)
     power = _column(rows, index, "directPower")
     lat = _column(rows, index, "directLatitude")
     lon = _column(rows, index, "directLongitude")
@@ -206,7 +223,7 @@ def build_detail(streams: dict, laps: dict, zones, sport: str) -> dict:
 
     lap_list, lengths = _laps(laps)
     return {
-        "version": 1,
+        "version": 2,  # 2: foot cadence is full steps per minute (was one foot)
         "points": {
             "t": pick(t, 0), "d": pick(d, 0), "hr": pick(hr, 0), "speed": pick(speed, 3),
             "elev": pick(elev, 1), "cad": pick(cad, 0), "power": pick(power, 0),

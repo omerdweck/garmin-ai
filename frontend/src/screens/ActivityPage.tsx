@@ -14,6 +14,8 @@ type Split = { index: number; meters: number; seconds: number; pace: number; avg
 type Detail = {
   points: Points; track: [number, number][]; splits: Split[]; split_meters: number;
   laps: unknown[]; lengths: Length[]; zones: { zone: number; seconds: number; low: number | null }[]; drift: number | null;
+  /** 2+: foot cadence is steps a minute. Before that it was one foot (half). */
+  version?: number;
 };
 type Activity = {
   id: number; name: string; sport: string; type: string; start: string; seconds: number; meters: number;
@@ -25,6 +27,8 @@ type Activity = {
 };
 
 type Tab = "metrics" | "splits" | "charts" | "zones";
+
+const FOOT_SPORTS = new Set(["running", "walking", "hiking"]);
 
 const POLL_MS = 4000;
 const POLL_LIMIT = 30; // two minutes
@@ -176,10 +180,19 @@ function Zones({ zones, drift }: { zones: Detail["zones"]; drift: number | null 
       </section>
       {drift !== null && (
         <section className="act-card">
-          <div className="act-card-head"><h3>📈 Cardiac drift</h3></div>
+          <div className="act-card-head"><h3>📈 Cardiac drift · עליית דופק</h3></div>
           <div className="act-big" style={{ color: drift > 5 ? ACCENT : "#1ba39c" }}>{drift > 0 ? "+" : ""}{drift}%</div>
           <p className="act-caption">
-            כמה יותר דופק עלתה אותה מהירות בחצי השני לעומת הראשון. עד 5%: אירובי יציב. מעל 5%: עייפות, חום או חוסר נוזלים.
+            כשהגוף מתעייף, הלב צריך לפעום מהר יותר כדי לשמור על אותו קצב.
+            המדד משווה את החצי השני של האימון לחצי הראשון: כמה דופק "עלה" כל ק״מ באותה מהירות.
+          </p>
+          <p className="act-caption">
+            {drift > 0
+              ? <>באימון הזה: באותו קצב, הדופק בחצי השני היה גבוה ב-{drift}% מאשר בחצי הראשון.</>
+              : <>באימון הזה: באותו קצב, הדופק בחצי השני לא היה גבוה יותר מבחצי הראשון.</>}
+          </p>
+          <p className="act-caption">
+            עד 5%: הגוף החזיק יציב לאורך כל האימון. מעל 5%: סימן לעייפות, חום או חוסר נוזלים.
           </p>
         </section>
       )}
@@ -226,7 +239,7 @@ function Summary({ a }: { a: Activity }) {
   const rows: [string, string][] = [];
   const e = a.extra;
   if (e.elevation_gain != null) rows.push(["טיפוס", `${fmt(Number(e.elevation_gain))} מ׳`]);
-  if (e.cadence) rows.push(["קדנס ממוצע", `${fmt(Number(e.cadence))} צעדים/דק׳`]);
+  if (e.cadence) rows.push(["Cadence ממוצע", `${fmt(Number(e.cadence))} צעדים/דק׳`]);
   if (e.avg_power) rows.push(["הספק ממוצע", `${fmt(Number(e.avg_power))} W`]);
   if (e.aerobic_te != null) rows.push(["Training Effect", `${Number(e.aerobic_te).toFixed(1)} אירובי · ${Number(e.anaerobic_te ?? 0).toFixed(1)} אנאירובי`]);
   if (e.load != null) rows.push(["עומס האימון", fmt(Number(e.load))]);
@@ -259,15 +272,20 @@ export function ActivityPage({ id }: { id: number }) {
   const series = useMemo(() => {
     if (!points) return null;
     const paces = points.speed.map(paceOf);
+    // Standing still is a gap, not a drop to 0. Workouts saved before version 2
+    // hold one foot's count on foot sports, so it is doubled to steps a minute.
+    const doubled = (d?.version ?? 1) < 2 && FOOT_SPORTS.has(a?.sport ?? "");
+    const cadence = points.cad.map((c) => (c && c > 0 ? (doubled ? c * 2 : c) : null));
     return {
       hr: { values: points.hr, color: "#e5484d", format: (v: number) => `${Math.round(v)}` } as Series,
-      pace: { values: paces, color: "#3b6fe0", inverse: true, format: (v: number) => duration(v) } as Series,
+      // Slow is up: the axis runs from the fastest pace at the bottom to the slowest at the top.
+      pace: { values: paces, color: "#3b6fe0", format: (v: number) => duration(v) } as Series,
       speed: { values: points.speed.map((s) => (s != null ? +(s * 3.6).toFixed(1) : null)), color: "#3b6fe0", format: (v: number) => `${v}` } as Series,
       elev: { values: points.elev, color: "#1ba39c", format: (v: number) => `${Math.round(v)}` } as Series,
-      cad: { values: points.cad, color: "#7b5cd6", format: (v: number) => `${Math.round(v)}`, area: false } as Series,
+      cad: { values: cadence, color: "#7b5cd6", format: (v: number) => `${Math.round(v)}`, area: false } as Series,
       power: { values: points.power, color: "#e0a21b", format: (v: number) => `${Math.round(v)}` } as Series,
     };
-  }, [points]);
+  }, [points, d?.version, a?.sport]);
 
   if (error) {
     return (
@@ -378,7 +396,10 @@ export function ActivityPage({ id }: { id: number }) {
                   series={a.sport === "cycling" ? series.speed : series.pace} height={110} onPointer={onPointer} />
               )}
               {points.elev.some((v) => v != null) && <ChartRow label="גובה" points={points} series={series.elev} height={110} onPointer={onPointer} />}
-              {points.cad.some((v) => v != null) && <ChartRow label="קדנס" points={points} series={series.cad} height={100} onPointer={onPointer} />}
+              {series.cad.values.some((v) => v != null) && (
+                <ChartRow label={a.sport === "cycling" ? "Cadence · סיבובי פדלים לדקה" : "Cadence · צעדים לדקה"}
+                  points={points} series={series.cad} height={100} onPointer={onPointer} />
+              )}
             </section>
           )}
 

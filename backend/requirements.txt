@@ -12,5 +12,7 @@ alembic==1.13.3
 garminconnect==0.3.11
 cryptography==50.0.0
 celery==5.6.3
+# Celery's transport layer. Pinned: kombu 5.7 needs redis-py 6.4+, and redis is pinned to 5.0.8 above.
+kombu==5.6.2
 python-telegram-bot==22.8
 anthropic==1.2.0
