@@ -177,7 +177,7 @@ export function HeroCard({ id, kicker, title, sub, progress, stats, onClick, chi
       {pct !== null && (
         <div className="hero-progress">
           <span className="num">{pct}%</span>
-          <div className="track" dir="ltr"><span style={{ width: `${Math.max(pct, 2)}%` }} /></div>
+          <div className="track" dir="ltr"><span style={{ "--p": `${Math.max(pct, 2)}%` } as CSSProperties} /></div>
         </div>
       )}
       {children}

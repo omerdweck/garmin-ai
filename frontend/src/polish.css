@@ -134,7 +134,8 @@ body {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
   z-index: 1100;
   pointer-events: none;
-  transition: transform 0.25s ease, opacity 0.25s ease, color 0.15s ease;
+  /* Back up on release with the knobs' settle curve: fast, no bounce. */
+  transition: transform var(--knob-move), opacity 0.25s ease, color 0.15s ease;
 }
 
 .ptr.dragging {
@@ -322,5 +323,52 @@ body {
   .spin,
   .ptr.busy svg {
     animation: none;
+  }
+}
+
+/* ---- the reader's settings for glass and contrast --------------------------- */
+
+/*
+ * "Reduce transparency": every frosted surface becomes a plain card - same
+ * shape and shadow, nothing showing through. Motion has its own query above.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .tabbar,
+  .glass-seg,
+  .arrow,
+  .icon-button,
+  .sync-button,
+  .range-nav.stuck {
+    background: var(--card);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .map-expand {
+    background: #1e1e20;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* "Increase contrast": solid surfaces with an edge you can actually see. */
+@media (prefers-contrast: more) {
+  .glass,
+  .tabbar,
+  .glass-seg,
+  .arrow,
+  .icon-button,
+  .sync-button,
+  .range-nav.stuck {
+    background: var(--card);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border: 1px solid color-mix(in srgb, var(--text) 55%, transparent);
+  }
+
+  .tabbar button,
+  .glass-seg button {
+    opacity: 1;
   }
 }

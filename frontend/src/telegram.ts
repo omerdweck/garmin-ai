@@ -9,6 +9,7 @@
 type Haptic = {
   selectionChanged(): void;
   impactOccurred(style: "light" | "medium" | "heavy" | "rigid" | "soft"): void;
+  notificationOccurred(type: "success" | "warning" | "error"): void;
 };
 
 type BackButton = {
@@ -50,6 +51,20 @@ export const tg: TelegramWebApp | null = webApp && webApp.initData ? webApp : nu
 export function hapticSelect(): void {
   try {
     tg?.HapticFeedback.selectionChanged();
+  } catch {
+    /* older clients */
+  }
+}
+
+/**
+ * The feel of an outcome, kept for the few moments that earn it: something
+ * the user asked for has finished, could not start, or failed. Call it in
+ * the same render that shows the outcome, so the screen and the buzz land
+ * together - and never for things the user didn't cause.
+ */
+export function hapticNotify(type: "success" | "warning" | "error"): void {
+  try {
+    tg?.HapticFeedback.notificationOccurred(type);
   } catch {
     /* older clients */
   }

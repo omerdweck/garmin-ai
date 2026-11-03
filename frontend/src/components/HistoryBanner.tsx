@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { apiGet } from "../api";
 import { onRefresh } from "../hooks/useApi";
 
@@ -48,7 +48,7 @@ export function HistoryBanner() {
     <div className="banner" role="status">
       📥 טוען את השנה האחרונה שלך מ-Garmin, <span className="num">{state.percent}%</span>
       <div className="bar">
-        <span style={{ width: `${Math.max(state.percent, 3)}%` }} />
+        <span style={{ "--p": `${Math.max(state.percent, 3)}%` } as CSSProperties} />
       </div>
     </div>
   );

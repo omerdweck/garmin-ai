@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "../api";
 import { onRefresh, refreshAll } from "../hooks/useApi";
-import { hapticSelect } from "../telegram";
+import { hapticNotify, hapticSelect } from "../telegram";
 
 type Status = { last_synced_at: string | null; syncing: boolean; linked: boolean };
 type SyncResult = "started" | "syncing" | "fresh" | "busy" | "unlinked";
@@ -51,6 +51,9 @@ export function SyncStatus() {
   const [note, setNote] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const wasSyncing = useRef(false);
+  // Only a sync the user started here buzzes when it ends: a scheduled one
+  // finishing in the background is not something they did.
+  const askedForSync = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -59,7 +62,11 @@ export function SyncStatus() {
       setNow(Date.now());
       const finished = wasSyncing.current && !next.syncing;
       wasSyncing.current = next.syncing;
-      if (finished) refreshAll();
+      if (finished) {
+        if (askedForSync.current) hapticNotify("success");
+        askedForSync.current = false;
+        refreshAll();
+      }
     } catch {
       /* a status line is not worth an error */
     }
@@ -90,9 +97,12 @@ export function SyncStatus() {
       if (result === "started" || result === "syncing") {
         setStatus((s) => (s ? { ...s, syncing: true } : s));
         wasSyncing.current = true;
+        askedForSync.current = true;
       }
+      if (result === "busy") hapticNotify("warning");
       setNote(NOTES[result] ?? null);
     } catch {
+      hapticNotify("error");
       setNote("לא הצלחתי להתחיל סנכרון");
     }
   };

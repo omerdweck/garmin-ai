@@ -11,10 +11,10 @@
  * and both must show the same number without waiting for the next poll.
  */
 
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { apiGet, apiPost } from "../api";
 import { Icon, type IconName } from "../components/icons";
-import { hapticSelect } from "../telegram";
+import { hapticNotify, hapticSelect } from "../telegram";
 import "./notifications.css";
 
 export type NotificationLink =
@@ -233,7 +233,15 @@ function Skeleton() {
 
 const PAGE = 20;
 
-export function Notifications({ onNavigate }: { onNavigate(link: NotificationLink): void }) {
+/** Where the bell is on screen: the screen grows out of it and shrinks back into it. */
+export type Origin = { x: number; y: number };
+
+export function Notifications({ onNavigate, origin, closing = false, onClosed }: {
+  onNavigate(link: NotificationLink): void;
+  origin?: Origin | null;
+  closing?: boolean;
+  onClosed?(): void;
+}) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [more, setMore] = useState(false);
   const [error, setError] = useState(false);
@@ -275,7 +283,7 @@ export function Notifications({ onNavigate }: { onNavigate(link: NotificationLin
   };
 
   const markAll = () => {
-    hapticSelect();
+    hapticNotify("success"); // the dots clear in this same render
     setItems((prev) => prev?.map((i) => ({ ...i, read: true })) ?? prev);
     setUnread(0);
     apiPost<{ unread: number }>("/api/notifications/read", { all: true })
@@ -305,7 +313,14 @@ export function Notifications({ onNavigate }: { onNavigate(link: NotificationLin
   }
 
   return (
-    <div className="notif-screen" role="dialog" aria-modal="true" aria-labelledby="notif-title">
+    <div
+      className={`notif-screen${closing ? " closing" : ""}`}
+      role="dialog" aria-modal="true" aria-labelledby="notif-title"
+      style={origin ? ({ "--ox": `${origin.x}px`, "--oy": `${origin.y}px` } as CSSProperties) : undefined}
+      onAnimationEnd={(e) => {
+        if (closing && e.target === e.currentTarget) onClosed?.();
+      }}
+    >
       <div className="notif-page">
         <header className="notif-header">
           <h1 id="notif-title" className="page-title">התראות</h1>

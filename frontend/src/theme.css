@@ -7,6 +7,12 @@
  */
 
 :root {
+  /* Inline direction as a sign, for transforms that move along it: in RTL
+     the next item is to the left. */
+  --dir: 1;
+  /* The sliding knobs: settles fast and without overshoot (close to a
+     critically damped spring, ~0.35s response). */
+  --knob-move: 0.35s cubic-bezier(0.25, 1, 0.5, 1);
   --font-brand: "Montserrat", "Heebo", system-ui, sans-serif;
   --font-display: "Heebo", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body: "Heebo", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -39,6 +45,14 @@
   /* Telegram sets these on new clients; env() covers the rest. */
   --safe-bottom: var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --safe-top: var(--tg-content-safe-area-inset-top, 0px);
+}
+
+[dir="rtl"] {
+  --dir: -1;
+}
+
+[dir="ltr"] {
+  --dir: 1;
 }
 
 :root[data-theme="light"] {
@@ -459,7 +473,10 @@ button {
   height: 100%;
   border-radius: 999px;
   background: var(--orange);
-  transition: width 0.8s ease;
+  /* Full width, slid back so --p of it shows: a transform, not a width, so
+     filling up costs no layout per frame. The track's overflow clips it. */
+  transform: translateX(calc(-1 * var(--dir) * (100% - var(--p, 0%))));
+  transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .hero-progress .num {
@@ -568,7 +585,9 @@ button {
   height: 100%;
   background: var(--accent);
   border-radius: 999px;
-  transition: width 0.6s ease;
+  /* As .hero-progress: slid, not resized. */
+  transform: translateX(calc(-1 * var(--dir) * (100% - var(--p, 0%))));
+  transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 /* ---- legend ------------------------------------------------------------ */
@@ -625,18 +644,30 @@ button {
 }
 
 /* The sliding dark circle. --i is the active tab's index (0 = first, which
-   sits on the right in RTL), set from TabBar.tsx. */
+   sits on the right in RTL), set from TabBar.tsx. The knob itself is one
+   cell wide and moves by whole cells with a transform (no layout per frame);
+   the circle is drawn centred inside it. The curve settles without
+   overshooting: a tap carries no momentum, so nothing should bounce. */
 .tabbar-knob {
   position: absolute;
   top: calc((var(--tabbar-height) - var(--knob)) / 2 - 1px);
-  inset-inline-start: calc(var(--pad) + var(--i, 0) * var(--cell) + (var(--cell) - var(--knob)) / 2);
+  inset-inline-start: var(--pad);
+  width: var(--cell);
+  height: var(--knob);
+  transform: translateX(calc(var(--i, 0) * 100% * var(--dir)));
+  transition: transform var(--knob-move);
+  pointer-events: none;
+}
+
+.tabbar-knob::before {
+  content: "";
+  display: block;
   width: var(--knob);
   height: var(--knob);
+  margin-inline: auto;
   border-radius: 50%;
   background: var(--text);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22), inset 0 1px 1px rgba(255, 255, 255, 0.18);
-  transition: inset-inline-start 0.45s cubic-bezier(0.34, 1.4, 0.64, 1);
-  pointer-events: none;
 }
 
 .tabbar button {
@@ -998,11 +1029,12 @@ button {
   top: var(--pad);
   bottom: var(--pad);
   width: calc((100% - 2 * var(--pad)) / var(--n));
-  inset-inline-start: calc(var(--pad) + var(--i) * (100% - 2 * var(--pad)) / var(--n));
+  inset-inline-start: var(--pad);
+  transform: translateX(calc(var(--i) * 100% * var(--dir)));
   border-radius: 999px;
   background: var(--text);
   box-shadow: 0 5px 14px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.18);
-  transition: inset-inline-start 0.45s cubic-bezier(0.34, 1.4, 0.64, 1);
+  transition: transform var(--knob-move);
   pointer-events: none;
 }
 

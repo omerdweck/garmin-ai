@@ -5,9 +5,13 @@ import { reducedMotion } from "../hooks/useCountUp";
 import { hapticSelect, tg } from "../telegram";
 
 const START_PX = 10; // finger travel before deciding it's a pull and not a tap or a sideways swipe
-const DAMPING = 0.5; // the circle moves half as far as the finger, so it feels attached, not dragged
 const THRESHOLD = 64;
-const MAX = 96;
+// Rubber band: close to the finger at first (STIFFNESS of its travel), then
+// resisting more and more, never quite reaching REACH - instead of following
+// at a fixed rate and stopping dead at a wall. Threshold at ~150px of pull.
+const STIFFNESS = 0.8;
+const REACH = 140;
+const rubberband = (travel: number) => (travel * REACH * STIFFNESS) / (REACH + STIFFNESS * travel);
 const MIN_SPIN_MS = 450; // a refresh answered from a warm server would otherwise just blink
 
 /**
@@ -65,7 +69,7 @@ export function PullToRefresh() {
         else if (dy > START_PX) g.pulling = true;
         if (!g.pulling) return;
       }
-      set(Math.max(0, Math.min(MAX, (dy - START_PX) * DAMPING)));
+      set(rubberband(Math.max(0, dy - START_PX)));
     };
 
     const onEnd = () => {

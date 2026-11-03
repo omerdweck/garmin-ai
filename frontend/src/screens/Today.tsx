@@ -119,7 +119,7 @@ function Readiness({ data }: { data: TodayData | null }) {
       {pct !== null && (
         <div className="hero-progress">
           <span className="num">{pct}%</span>
-          <div className="track" dir="ltr"><span style={{ width: `${Math.max(pct, 2)}%` }} /></div>
+          <div className="track" dir="ltr"><span style={{ "--p": `${Math.max(pct, 2)}%` } as CSSProperties} /></div>
         </div>
       )}
       {data.coach_line && (

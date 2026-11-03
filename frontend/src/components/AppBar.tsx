@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { Origin } from "../screens/Notifications";
 import { refreshUnread, useUnread } from "../screens/Notifications";
 import "../screens/notifications.css";
 import { tg } from "../telegram";
@@ -13,7 +14,7 @@ const POLL_MS = 60_000;
  * carries the number of unread messages from the bot and opens the
  * notifications screen.
  */
-export function AppBar({ name, onAlerts }: { name: string; onAlerts(): void }) {
+export function AppBar({ name, onAlerts }: { name: string; onAlerts(origin: Origin | null): void }) {
   const unread = useUnread();
   const photo = tg?.initDataUnsafe.user?.photo_url;
   const initial = (name || tg?.initDataUnsafe.user?.first_name || "").trim().charAt(0);
@@ -43,7 +44,13 @@ export function AppBar({ name, onAlerts }: { name: string; onAlerts(): void }) {
         <span className="avatar" aria-hidden="true">
           {photo ? <img src={photo} alt="" referrerPolicy="no-referrer" /> : initial || <Icon name="heart" size={18} />}
         </span>
-        <button className="icon-button" onClick={onAlerts} aria-label={count ? `התראות, ${count} לא נקראו` : "התראות"}>
+        <button
+          className="icon-button"
+          onClick={(e) => {
+            // The bell's centre: the notifications screen grows out of it.
+            const r = e.currentTarget.getBoundingClientRect();
+            onAlerts({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+          }} aria-label={count ? `התראות, ${count} לא נקראו` : "התראות"}>
           <Icon name="bell" size={20} />
           {count > 0 && <span className="badge count num" aria-hidden="true">{count > 99 ? "99+" : count}</span>}
         </button>

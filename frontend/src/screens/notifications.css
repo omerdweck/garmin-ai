@@ -35,18 +35,34 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  animation: notif-in 0.18s ease-out;
+  /* Grows out of the bell (its centre, set inline by App) and closes back
+     into it along the same path: the exit is the entry's curve reversed. */
+  transform-origin: var(--ox, 100%) var(--oy, 0);
+  animation: notif-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.notif-screen.closing {
+  animation: notif-out 0.2s cubic-bezier(0.8, 0, 0.8, 0.2) forwards;
+  pointer-events: none;
 }
 
 @keyframes notif-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: scale(0.9);
+  }
+}
+
+@keyframes notif-out {
+  to {
+    opacity: 0;
+    transform: scale(0.9);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .notif-screen {
+  .notif-screen,
+  .notif-screen.closing {
     animation: none;
   }
 }

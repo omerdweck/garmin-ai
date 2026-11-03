@@ -3,7 +3,8 @@ import { authenticate, NotMemberError } from "./api";
 import { AppBar } from "./components/AppBar";
 import { TabBar, type Tab } from "./components/TabBar";
 import { RangeProvider } from "./range";
-import { Notifications, type NotificationLink } from "./screens/Notifications";
+import { reducedMotion } from "./hooks/useCountUp";
+import { Notifications, type NotificationLink, type Origin } from "./screens/Notifications";
 import { Records } from "./screens/Records";
 import { Today } from "./screens/Today";
 import { activityFromUrl, NavContext, scrollToFocus, type Nav } from "./nav";
@@ -97,12 +98,20 @@ export function App() {
   const [tab, setTab] = useState<Tab>(() => (activityFromUrl() ? "workouts" : "today"));
   // The bell's screen. Drawn over the tab rather than instead of it, so
   // closing it leaves the tab - and how far down it was scrolled - as it was.
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  // `closing` keeps it on screen for its exit, which runs the entry backwards
+  // into the bell it came out of.
+  const [notifications, setNotifications] = useState<{ origin: Origin | null; closing: boolean } | null>(null);
+  const notificationsOpen = notifications !== null;
+  const openNotifications = useCallback((origin: Origin | null) => setNotifications({ origin, closing: false }), []);
+  const closeNotifications = useCallback(() => {
+    if (reducedMotion()) setNotifications(null);
+    else setNotifications((n) => (n ? { ...n, closing: true } : n));
+  }, []);
   const back = useCallback(() => {
-    if (notificationsOpen) setNotificationsOpen(false);
+    if (notificationsOpen) closeNotifications();
     else if (activityId !== null) setActivityId(null);
     else setTab("today");
-  }, [activityId, notificationsOpen]);
+  }, [activityId, notificationsOpen, closeNotifications]);
   useTelegramBack(tab, activityId !== null || notificationsOpen, back);
   useScrollLock(notificationsOpen);
 
@@ -127,8 +136,9 @@ export function App() {
 
   // A tapped notification: close the screen, then go where it points.
   const fromNotification = useCallback((link: NotificationLink) => {
-    setNotificationsOpen(false);
-    if (!link) return;
+    // Going somewhere is its own transition; only a plain close shrinks back.
+    if (!link) return closeNotifications();
+    setNotifications(null);
     if (link.type === "activity") {
       nav.openActivity(link.id);
       return;
@@ -141,7 +151,7 @@ export function App() {
       return;
     }
     nav.openTab(target, link.focus);
-  }, [nav, tab]);
+  }, [nav, tab, closeNotifications]);
 
   switch (session.state) {
     case "loading":
@@ -172,7 +182,7 @@ export function App() {
     <NavContext.Provider value={nav}>
     <RangeProvider>
       <main className="app" inert={notificationsOpen}>
-        <AppBar name={session.name} onAlerts={() => setNotificationsOpen(true)} />
+        <AppBar name={session.name} onAlerts={openNotifications} />
         {tab === "today" && <Today name={session.name} />}
         <Suspense fallback={<div className="skeleton" style={{ height: 240, marginTop: 60 }} />}>
           {tab === "workouts" && <Workouts />}
@@ -182,7 +192,14 @@ export function App() {
         {tab === "records" && <Records />}
       </main>
       <TabBar active={tab} onChange={setTab} />
-      {notificationsOpen && <Notifications onNavigate={fromNotification} />}
+      {notifications && (
+        <Notifications
+          onNavigate={fromNotification}
+          origin={notifications.origin}
+          closing={notifications.closing}
+          onClosed={() => setNotifications(null)}
+        />
+      )}
     </RangeProvider>
     </NavContext.Provider>
   );
