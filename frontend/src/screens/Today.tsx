@@ -4,7 +4,7 @@ import { Icon } from "../components/icons";
 import { LoadGauge, type LoadBalanceData } from "../components/LoadBalance";
 import { Rings } from "../components/Rings";
 import { PageHeader } from "../components/ui";
-import { distance, duration, fmt } from "../format";
+import { distance, fmt, watchTime } from "../format";
 import { useApi } from "../hooks/useApi";
 import { useNav } from "../nav";
 import { SPORTS } from "../sports";
@@ -193,7 +193,7 @@ function DoneWorkout({ done }: { done: TodayData["today_done"][number] }) {
   const nav = useNav();
   const sport = sportOf(done.sport);
   // Each part isolated on its own: "6.00 ק״מ" mixes directions, and joined into one run the bidi algorithm reorders it.
-  const result = [done.meters ? distance(done.meters, done.sport) : null, done.seconds ? duration(done.seconds) : null]
+  const result = [done.meters ? distance(done.meters, done.sport) : null, done.seconds ? watchTime(done.seconds) : null]
     .filter((x): x is string => Boolean(x));
   return (
     <button type="button" className="inner-box done-workout" onClick={() => nav.openActivity(done.id)}>

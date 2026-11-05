@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from sqlmodel import Session, col, select
 
 from app.models.activity import SOURCE_MANUAL, Activity
-from app.services.activity_numbers import clock, pace_seconds
+from app.services.activity_numbers import clock, pace_seconds, timer_seconds, watch_time
 
 RLM = "‏"
 
@@ -113,7 +113,7 @@ def _get(activity: Activity, key: str):
 
 
 def _fmt_duration(seconds: Optional[float]) -> Optional[str]:
-    text = clock(seconds)
+    text = watch_time(seconds)
     if text is None:
         return None
     return f"{text} שעות" if text.count(":") == 2 else f"{text} דקות"
@@ -186,7 +186,7 @@ def _format_running(activity: Activity) -> list[str]:
     lines = []
     if activity.distance_meters:
         lines.append(_rtl(f'📏 מרחק — *{activity.distance_meters / 1000:.2f}* ק"מ'))
-    duration = _fmt_duration(activity.duration_seconds)
+    duration = _fmt_duration(timer_seconds(activity))
     if duration:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
     pace = _fmt_pace(activity)
@@ -218,7 +218,7 @@ def _format_running(activity: Activity) -> list[str]:
 
     best_km = _get(activity, "fastestSplit_1000")
     if best_km:
-        lines.append(_rtl(f'🏅 הק"מ המהיר ביותר — *{int(best_km // 60)}:{int(best_km % 60):02d}*'))
+        lines.append(_rtl(f'🏅 הק"מ המהיר ביותר — *{clock(best_km)}*'))
     return lines
 
 
@@ -226,7 +226,7 @@ def _format_swimming(activity: Activity) -> list[str]:
     lines = []
     if activity.distance_meters:
         lines.append(_rtl(f"📏 מרחק — *{activity.distance_meters:.0f}* מטר"))
-    duration = _fmt_duration(activity.duration_seconds)
+    duration = _fmt_duration(timer_seconds(activity))
     if duration:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
 
@@ -261,7 +261,7 @@ def _format_swimming(activity: Activity) -> list[str]:
 
 def _format_strength(activity: Activity) -> list[str]:
     lines = []
-    duration = _fmt_duration(activity.duration_seconds)
+    duration = _fmt_duration(timer_seconds(activity))
     if duration:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
 
@@ -330,7 +330,7 @@ def _muscle_lines(activity: Activity) -> list[str]:
 def _format_generic(activity: Activity) -> list[str]:
     """Fallback for types without a dedicated formatter - still better than nothing."""
     lines = []
-    duration = _fmt_duration(activity.duration_seconds)
+    duration = _fmt_duration(timer_seconds(activity))
     if duration:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
     if activity.distance_meters:

@@ -41,7 +41,7 @@ from app.core.claude_prompts import (
 )
 from app.core.config import settings
 from app.models.activity import SOURCE_MANUAL, Activity
-from app.services.activity_numbers import clock, pace_seconds
+from app.services.activity_numbers import clock, pace_seconds, timer_seconds, watch_time
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
@@ -686,8 +686,8 @@ def _activity_to_dict(activity: Activity) -> dict:
         "manually_entered": True if activity.source == SOURCE_MANUAL else None,
         "start_time": activity.start_time.isoformat(),
         # The watch's timer time, as the watch shows it - the coach quotes
-        # it back, and "35.5 minutes" next to a watch saying 35:30 reads as a mismatch.
-        "duration": clock(activity.duration_seconds),
+        # it back, and "35.5 minutes" next to a watch saying 35:29.8 reads as a mismatch.
+        "duration": watch_time(timer_seconds(activity)),
         "distance_meters": activity.distance_meters,
         "avg_heart_rate": activity.avg_heart_rate,
         "max_heart_rate": activity.max_heart_rate,

@@ -19,7 +19,7 @@ from sqlmodel import Session, col, select
 
 from app.core import clock
 from app.models.activity import Activity
-from app.services.activity_numbers import clock, pace_seconds
+from app.services.activity_numbers import clock, pace_seconds, timer_seconds, watch_time
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
@@ -335,7 +335,7 @@ def format_last_activity(session: Session, user_id: int) -> str:
         "",
     ]
     if activity.duration_seconds:
-        lines.append(_rtl(f"⏱ משך — *{clock(activity.duration_seconds)}*"))
+        lines.append(_rtl(f"⏱ משך — *{watch_time(timer_seconds(activity))}*"))
     if activity.distance_meters:
         lines.append(_rtl(f'📏 מרחק — *{activity.distance_meters / 1000:.2f}* ק"מ'))
     pace = clock(pace_seconds(activity))
@@ -771,7 +771,7 @@ def format_recent_activities(session: Session, user_id: int, limit: int = 5) -> 
         if activity.distance_meters:
             details.append(f'{activity.distance_meters / 1000:.2f} ק"מ')
         if activity.duration_seconds:
-            details.append(clock(activity.duration_seconds))
+            details.append(watch_time(timer_seconds(activity)))
         pace = clock(pace_seconds(activity))
         if pace:
             details.append(f'{pace} לק"מ')

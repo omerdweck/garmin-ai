@@ -437,7 +437,7 @@ def today(session: Session, user_id: int, today_: date) -> dict:
 
     week, week_done = _week(session, user_id, today_)
     today_done = [
-        {"id": id_, "name": name or "", "sport": dashboard_sport(t), "seconds": round(sec or 0),
+        {"id": id_, "name": name or "", "sport": dashboard_sport(t), "seconds": round(sec or 0, 2),
          "meters": round(meters) if meters else None}
         for id_, start, t, name, sec, meters in week_done if start.date() == today_
     ]

@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { apiGet } from "../api";
 import { onRefresh } from "../hooks/useApi";
-import { distance, duration, when } from "../format";
+import { distance, watchTime, when } from "../format";
 import { useOpenActivity } from "../nav";
 import { SPORTS } from "../sports";
 import "../screens/activity.css";
@@ -71,7 +71,7 @@ export function ActivityList({ id }: { id?: string }) {
                   </span>
                   <span className="activity-numbers">
                     {a.meters > 0 && <span className="num">{distance(a.meters, a.sport)}</span>}
-                    <span className="stat-sub num">{duration(a.seconds)}</span>
+                    <span className="stat-sub num">{watchTime(a.seconds)}</span>
                   </span>
                   <span className="chevron" aria-hidden="true"><Icon name="chevronLeft" size={18} /></span>
                 </button>

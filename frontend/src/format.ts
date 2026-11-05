@@ -12,6 +12,12 @@ export function duration(seconds: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+/** A workout's total time to the tenth, as the watch shows it: 2129.84 -> "35:29.8". */
+export function watchTime(seconds: number): string {
+  const tenths = Math.floor(seconds * 10); // the watch cuts, it doesn't round up
+  return `${duration(Math.floor(tenths / 10))}.${tenths % 10}`;
+}
+
 /** Metres per second to a pace per km ("5:05") - or per 100 m for swimming. */
 export function pace(metersPerSecond: number | null | undefined, per = 1000): string {
   if (!metersPerSecond || metersPerSecond <= 0.2) return "—";

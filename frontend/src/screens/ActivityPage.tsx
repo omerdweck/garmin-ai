@@ -5,7 +5,7 @@ import { CHART_GROUP, lengthsChart, metricChart, paceOf, STROKE_LABEL, xAxisOf, 
 import { GlassSegmented } from "../components/GlassSegmented";
 import { RouteMap } from "../components/RouteMap";
 import { EmptyState } from "../components/ui";
-import { duration, fmt, pace, when } from "../format";
+import { duration, fmt, pace, watchTime, when } from "../format";
 import { useNav } from "../nav";
 import { SPORTS } from "../sports";
 import "./activity.css";
@@ -72,13 +72,20 @@ function Stat({ value, unit, label }: { value: string; unit?: string; label: str
   );
 }
 
+/** Garmin's average speed; time / distance only for a manual entry. */
+function avgSpeed(a: Activity): number | null {
+  const garmin = Number(a.extra.avg_speed);
+  if (garmin > 0) return garmin;
+  return a.meters && a.seconds ? a.meters / a.seconds : null;
+}
+
 /** The four numbers in the dark card: what matters most for this kind of workout. */
 function heroStats(a: Activity): { value: string; unit?: string; label: string }[] {
-  // The watch's timer time, not moving time: moving time also drops the
-  // moments you stood still with the timer running, so it never matches the
-  // watch. Pace is that same time over the distance - what the watch shows.
-  const speed = a.meters && a.seconds ? a.meters / a.seconds : null;
-  const time = { value: duration(a.seconds), label: "משך זמן" };
+  // Garmin's own numbers, exactly as the watch shows them: the timer time
+  // (not moving time, which also drops the moments you stood still with the
+  // timer running) and the average speed the watch computed.
+  const speed = avgSpeed(a);
+  const time = { value: watchTime(a.seconds), label: "משך זמן" };
   const kcal = { value: a.calories ? fmt(a.calories) : "—", unit: "kcal", label: "קלוריות" };
   if (a.sport === "swimming") {
     return [
@@ -366,11 +373,11 @@ export function ActivityPage({ id }: { id: number }) {
               {points && series && !isSwim && !isStrength && paceValues.length > 0 && (
                 a.sport === "cycling" ? (
                   <MetricCard icon="🚴" title="מהירות" points={points} series={series.speed} onPointer={onPointer}
-                    left={["ממוצעת", `${fmt((a.meters / a.seconds) * 3.6, 1)} קמ״ש`]}
+                    left={["ממוצעת", `${fmt((avgSpeed(a) ?? 0) * 3.6, 1)} קמ״ש`]}
                     right={["מקסימלית", `${fmt(Number(a.extra.max_speed ?? 0) * 3.6, 1)} קמ״ש`]} />
                 ) : (
                   <MetricCard icon="⏱" title="קצב" points={points} series={series.pace} onPointer={onPointer}
-                    left={["ממוצע", `${pace(a.meters / a.seconds)} /km`]}
+                    left={["ממוצע", `${pace(avgSpeed(a))} /km`]}
                     right={["מהיר ביותר", `${duration(Math.min(...paceValues))} /km`]} />
                 )
               )}
