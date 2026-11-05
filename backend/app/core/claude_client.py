@@ -41,6 +41,7 @@ from app.core.claude_prompts import (
 )
 from app.core.config import settings
 from app.models.activity import SOURCE_MANUAL, Activity
+from app.services.activity_numbers import clock, pace_seconds
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
@@ -684,15 +685,15 @@ def _activity_to_dict(activity: Activity) -> dict:
         # signal that the missing fields below are missing by nature.
         "manually_entered": True if activity.source == SOURCE_MANUAL else None,
         "start_time": activity.start_time.isoformat(),
-        "duration_minutes": round(activity.duration_seconds / 60, 1) if activity.duration_seconds else None,
+        # The watch's timer time, as the watch shows it - the coach quotes
+        # it back, and "35.5 minutes" next to a watch saying 35:30 reads as a mismatch.
+        "duration": clock(activity.duration_seconds),
         "distance_meters": activity.distance_meters,
         "avg_heart_rate": activity.avg_heart_rate,
         "max_heart_rate": activity.max_heart_rate,
         "calories": activity.calories,
     }
-    if activity.distance_meters and activity.duration_seconds and activity.distance_meters > 100:
-        pace = activity.duration_seconds / (activity.distance_meters / 1000)
-        result["pace_per_km"] = f"{int(pace // 60)}:{int(pace % 60):02d}"
+    result["pace_per_km"] = clock(pace_seconds(activity))
     return {key: value for key, value in result.items() if value is not None}
 
 
