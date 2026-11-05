@@ -54,7 +54,8 @@ def _row(a: Activity) -> dict:
         "sport": dashboard_sport(a.activity_type),
         "type": a.activity_type,
         "start": a.start_time.isoformat(),
-        "seconds": round(a.duration_seconds or 0),
+        # Unrounded: the page rounds once, the same way the chat does.
+        "seconds": round(a.duration_seconds or 0, 2),
         "meters": round(a.distance_meters or 0),
         "avg_hr": round(a.avg_heart_rate) if a.avg_heart_rate else None,
         "manual": a.source == SOURCE_MANUAL,

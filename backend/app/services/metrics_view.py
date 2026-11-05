@@ -19,6 +19,7 @@ from sqlmodel import Session, col, select
 
 from app.core import clock
 from app.models.activity import Activity
+from app.services.activity_numbers import clock, pace_seconds
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
 from app.models.user import User
@@ -334,12 +335,12 @@ def format_last_activity(session: Session, user_id: int) -> str:
         "",
     ]
     if activity.duration_seconds:
-        lines.append(_rtl(f"⏱ משך — *{int(activity.duration_seconds // 60)}* דקות"))
+        lines.append(_rtl(f"⏱ משך — *{clock(activity.duration_seconds)}*"))
     if activity.distance_meters:
         lines.append(_rtl(f'📏 מרחק — *{activity.distance_meters / 1000:.2f}* ק"מ'))
-    if activity.distance_meters and activity.duration_seconds and activity.distance_meters > 100:
-        pace = activity.duration_seconds / (activity.distance_meters / 1000)
-        lines.append(_rtl(f'⚡ קצב — *{int(pace // 60)}:{int(pace % 60):02d}* לק"מ'))
+    pace = clock(pace_seconds(activity))
+    if pace:
+        lines.append(_rtl(f'⚡ קצב — *{pace}* לק"מ'))
     if activity.avg_heart_rate:
         max_hr = f" (שיא {int(activity.max_heart_rate)})" if activity.max_heart_rate else ""
         lines.append(_rtl(f"❤️ דופק ממוצע — *{int(activity.avg_heart_rate)}*{max_hr}"))
@@ -770,10 +771,10 @@ def format_recent_activities(session: Session, user_id: int, limit: int = 5) -> 
         if activity.distance_meters:
             details.append(f'{activity.distance_meters / 1000:.2f} ק"מ')
         if activity.duration_seconds:
-            details.append(f"{int(activity.duration_seconds // 60)} דקות")
-        if activity.distance_meters and activity.duration_seconds and activity.distance_meters > 100:
-            pace_sec_per_km = activity.duration_seconds / (activity.distance_meters / 1000)
-            details.append(f'{int(pace_sec_per_km // 60)}:{int(pace_sec_per_km % 60):02d} לק"מ')
+            details.append(clock(activity.duration_seconds))
+        pace = clock(pace_seconds(activity))
+        if pace:
+            details.append(f'{pace} לק"מ')
         if activity.avg_heart_rate:
             details.append(f"דופק {int(activity.avg_heart_rate)}")
         if activity.calories:

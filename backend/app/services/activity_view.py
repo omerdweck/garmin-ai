@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from sqlmodel import Session, col, select
 
 from app.models.activity import SOURCE_MANUAL, Activity
+from app.services.activity_numbers import clock, pace_seconds
 
 RLM = "‏"
 
@@ -112,20 +113,14 @@ def _get(activity: Activity, key: str):
 
 
 def _fmt_duration(seconds: Optional[float]) -> Optional[str]:
-    if not seconds:
+    text = clock(seconds)
+    if text is None:
         return None
-    total = int(seconds)
-    hours, minutes, secs = total // 3600, (total % 3600) // 60, total % 60
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d} שעות"
-    return f"{minutes}:{secs:02d} דקות"
+    return f"{text} שעות" if text.count(":") == 2 else f"{text} דקות"
 
 
-def _fmt_pace(seconds: Optional[float], meters: Optional[float]) -> Optional[str]:
-    if not seconds or not meters or meters < 100:
-        return None
-    pace = seconds / (meters / 1000)
-    return f"{int(pace // 60)}:{int(pace % 60):02d}"
+def _fmt_pace(activity: Activity, per_meters: float = 1000) -> Optional[str]:
+    return clock(pace_seconds(activity, per_meters))
 
 
 def _heart_lines(activity: Activity) -> list[str]:
@@ -194,7 +189,7 @@ def _format_running(activity: Activity) -> list[str]:
     duration = _fmt_duration(activity.duration_seconds)
     if duration:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
-    pace = _fmt_pace(activity.duration_seconds, activity.distance_meters)
+    pace = _fmt_pace(activity)
     if pace:
         lines.append(_rtl(f'⚡ קצב ממוצע — *{pace}* לק"מ'))
 
@@ -235,9 +230,9 @@ def _format_swimming(activity: Activity) -> list[str]:
     if duration:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
 
-    if activity.duration_seconds and activity.distance_meters:
-        per_100 = activity.duration_seconds / (activity.distance_meters / 100)
-        lines.append(_rtl(f"⚡ קצב — *{int(per_100 // 60)}:{int(per_100 % 60):02d}* ל-100 מטר"))
+    per_100 = _fmt_pace(activity, per_meters=100)
+    if per_100:
+        lines.append(_rtl(f"⚡ קצב — *{per_100}* ל-100 מטר"))
 
     lines.extend(_heart_lines(activity))
 
@@ -340,7 +335,7 @@ def _format_generic(activity: Activity) -> list[str]:
         lines.append(_rtl(f"⏱ משך — *{duration}*"))
     if activity.distance_meters:
         lines.append(_rtl(f'📏 מרחק — *{activity.distance_meters / 1000:.2f}* ק"מ'))
-        pace = _fmt_pace(activity.duration_seconds, activity.distance_meters)
+        pace = _fmt_pace(activity)
         if pace:
             lines.append(_rtl(f'⚡ קצב — *{pace}* לק"מ'))
     lines.extend(_heart_lines(activity))

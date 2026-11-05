@@ -70,9 +70,11 @@ function Stat({ value, unit, label }: { value: string; unit?: string; label: str
 
 /** The four numbers in the dark card: what matters most for this kind of workout. */
 function heroStats(a: Activity): { value: string; unit?: string; label: string }[] {
-  const moving = Number(a.extra.moving_seconds) || a.seconds;
-  const speed = a.meters && moving ? a.meters / moving : null;
-  const time = { value: duration(moving), label: "משך זמן" };
+  // The watch's timer time, not moving time: moving time also drops the
+  // moments you stood still with the timer running, so it never matches the
+  // watch. Pace is that same time over the distance - what the watch shows.
+  const speed = a.meters && a.seconds ? a.meters / a.seconds : null;
+  const time = { value: duration(a.seconds), label: "משך זמן" };
   const kcal = { value: a.calories ? fmt(a.calories) : "—", unit: "kcal", label: "קלוריות" };
   if (a.sport === "swimming") {
     return [
@@ -346,11 +348,11 @@ export function ActivityPage({ id }: { id: number }) {
               {points && series && !isSwim && !isStrength && paceValues.length > 0 && (
                 a.sport === "cycling" ? (
                   <MetricCard icon="🚴" title="מהירות" points={points} series={series.speed} onPointer={onPointer}
-                    left={["ממוצעת", `${fmt((a.meters / (Number(a.extra.moving_seconds) || a.seconds)) * 3.6, 1)} קמ״ש`]}
+                    left={["ממוצעת", `${fmt((a.meters / a.seconds) * 3.6, 1)} קמ״ש`]}
                     right={["מקסימלית", `${fmt(Number(a.extra.max_speed ?? 0) * 3.6, 1)} קמ״ש`]} />
                 ) : (
                   <MetricCard icon="⏱" title="קצב" points={points} series={series.pace} onPointer={onPointer}
-                    left={["ממוצע", `${pace(a.meters / (Number(a.extra.moving_seconds) || a.seconds))} /km`]}
+                    left={["ממוצע", `${pace(a.meters / a.seconds)} /km`]}
                     right={["מהיר ביותר", `${duration(Math.min(...paceValues))} /km`]} />
                 )
               )}
