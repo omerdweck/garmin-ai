@@ -222,7 +222,7 @@ def test_today_payload_for_the_home_screen(client, session, make_user, make_acti
 
     body = get_today(client, user)
     assert body["today_done"] == [
-        {"id": done.id, "name": "ריצה קלה", "sport": "running", "seconds": 1800, "meters": 5012}
+        {"id": done.id, "name": "ריצה קלה", "sport": "running", "seconds": 1800.4, "meters": 5012}
     ]
     assert body["next_workout"] == {"name": "רכיבה", "sport": "cycling", "date": "2026-10-29", "on_watch": False}
     assert [d["date"] for d in body["week"]][0] == SUNDAY.isoformat() and len(body["week"]) == 7
