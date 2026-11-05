@@ -36,7 +36,7 @@ def pace_seconds(activity, per_meters: float = 1000) -> Optional[float]:
     return seconds / (meters / per_meters)
 
 
-def clock(seconds: Optional[float]) -> Optional[str]:
+def mm_ss(seconds: Optional[float]) -> Optional[str]:
     """Whole seconds, for paces: 303.95 -> "5:04"."""
     if not seconds:
         return None

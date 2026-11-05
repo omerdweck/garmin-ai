@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from sqlmodel import Session, col, select
 
 from app.models.activity import SOURCE_MANUAL, Activity
-from app.services.activity_numbers import clock, pace_seconds, timer_seconds, watch_time
+from app.services.activity_numbers import mm_ss, pace_seconds, timer_seconds, watch_time
 
 RLM = "‏"
 
@@ -120,7 +120,7 @@ def _fmt_duration(seconds: Optional[float]) -> Optional[str]:
 
 
 def _fmt_pace(activity: Activity, per_meters: float = 1000) -> Optional[str]:
-    return clock(pace_seconds(activity, per_meters))
+    return mm_ss(pace_seconds(activity, per_meters))
 
 
 def _heart_lines(activity: Activity) -> list[str]:
@@ -218,7 +218,7 @@ def _format_running(activity: Activity) -> list[str]:
 
     best_km = _get(activity, "fastestSplit_1000")
     if best_km:
-        lines.append(_rtl(f'🏅 הק"מ המהיר ביותר — *{clock(best_km)}*'))
+        lines.append(_rtl(f'🏅 הק"מ המהיר ביותר — *{mm_ss(best_km)}*'))
     return lines
 
 

@@ -41,7 +41,7 @@ from app.core.claude_prompts import (
 )
 from app.core.config import settings
 from app.models.activity import SOURCE_MANUAL, Activity
-from app.services.activity_numbers import clock, pace_seconds, timer_seconds, watch_time
+from app.services.activity_numbers import mm_ss, pace_seconds, timer_seconds, watch_time
 from app.models.chat_message import ChatMessage
 from app.models.daily_metric import DailyMetric
 from app.models.meal_plan import MEAL_SLOTS, MealOption, MealPlan
@@ -693,7 +693,7 @@ def _activity_to_dict(activity: Activity) -> dict:
         "max_heart_rate": activity.max_heart_rate,
         "calories": activity.calories,
     }
-    result["pace_per_km"] = clock(pace_seconds(activity))
+    result["pace_per_km"] = mm_ss(pace_seconds(activity))
     return {key: value for key, value in result.items() if value is not None}
 
 
