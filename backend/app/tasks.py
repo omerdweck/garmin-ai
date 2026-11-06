@@ -353,6 +353,7 @@ def fetch_activity_detail_task(activity_id: int) -> None:
     from garminconnect.exceptions import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
 
     from app.models.activity import Activity
+    from app.services.activity_detail import is_current
     from app.services.garmin_sync import fetch_activity_detail
     from app.services.sync_lock import _redis
 
@@ -361,7 +362,7 @@ def fetch_activity_detail_task(activity_id: int) -> None:
             return
         with Session(engine) as session:
             activity = session.get(Activity, activity_id)
-            if activity is None or activity.detail is not None or activity.garmin_activity_id is None:
+            if activity is None or is_current(activity.detail) or activity.garmin_activity_id is None:
                 return
             account = session.exec(
                 select(GarminAccount).where(GarminAccount.user_id == activity.user_id)

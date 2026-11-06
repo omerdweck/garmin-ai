@@ -13,6 +13,7 @@ from sqlmodel import Session, col, select
 
 from app.core.config import settings
 from app.models.activity import SOURCE_MANUAL, Activity
+from app.services.activity_detail import is_current
 from app.services.activity_view import EXERCISE_MUSCLE_GROUPS
 from app.services.workout_stats import dashboard_sport
 
@@ -102,7 +103,7 @@ def page(session: Session, user_id: int, activity_id: int) -> Optional[dict]:
     raw = activity.raw_json or {}
     if activity.source == SOURCE_MANUAL or activity.garmin_activity_id is None:
         status = "manual"
-    elif activity.detail is not None:
+    elif is_current(activity.detail):
         status = "ready"
     else:
         status = "missing"

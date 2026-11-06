@@ -73,7 +73,6 @@ class Row:
     day: date
     sport: str
     seconds: float
-    moving_seconds: float
     distance_m: float
     elevation_m: float
     load: float
@@ -101,10 +100,8 @@ def _rows(session: Session, user_id: int, start: date, end: date) -> list[Row]:
         rows.append(Row(
             day=start_time.date(),
             sport=dashboard_sport(activity_type),
+            # The watch's timer time - what Garmin Connect adds up too.
             seconds=seconds,
-            # Moving time leaves out the stops; fall back to elapsed time
-            # for workouts that don't record it (strength, manual entries).
-            moving_seconds=_num(raw.get("movingDuration")) or seconds,
             distance_m=_num(distance),
             elevation_m=_num(raw.get("elevationGain")),
             load=_num(raw.get("activityTrainingLoad")),
@@ -116,7 +113,7 @@ def _totals(rows: list[Row]) -> dict:
     return {
         "workouts": len(rows),
         "distance_km": round(sum(r.distance_m for r in rows) / 1000, 1),
-        "moving_hours": round(sum(r.moving_seconds for r in rows) / 3600, 1),
+        "hours": round(sum(r.seconds for r in rows) / 3600, 1),
         "elevation_m": round(sum(r.elevation_m for r in rows)),
     }
 

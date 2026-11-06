@@ -38,7 +38,7 @@ from app.core.garmin_client import (
 from app.models.activity import SOURCE_GARMIN, Activity
 from app.models.daily_metric import DailyMetric
 from app.models.garmin_account import GarminAccount
-from app.services.activity_detail import build_detail
+from app.services.activity_detail import build_detail, is_current
 from app.services.records import sync_personal_records
 from app.services.sleep_details import apply_sleep_details
 
@@ -504,12 +504,13 @@ def fetch_activity_detail(session: Session, activity: Activity, garmin_session: 
     Fetches and stores the second-by-second detail of one Garmin workout
     (three requests: streams, laps, heart-rate zones), and for strength
     workouts the sets too, in the same go. Once per workout: a finished
-    workout never changes, so a stored detail is never fetched again.
+    workout never changes, so a stored detail is never fetched again -
+    unless older code built it (activity_detail.DETAIL_VERSION).
 
     Garmin errors are left to the caller - the Celery task turns throttling
     into the shared back-off switch.
     """
-    if activity.detail is not None or activity.garmin_activity_id is None:
+    if is_current(activity.detail) or activity.garmin_activity_id is None:
         return activity
     from app.services.workout_stats import dashboard_sport
 

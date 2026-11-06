@@ -17,7 +17,7 @@ import { useApi } from "../hooks/useApi";
 import { scrollToFocus } from "../nav";
 import { useRange } from "../range";
 
-type Totals = { workouts: number; distance_km: number; moving_hours: number; elevation_m: number };
+type Totals = { workouts: number; distance_km: number; hours: number; elevation_m: number };
 type Summary = { totals: Totals; previous: Totals; bucket: string; hours_by_sport: HoursBucket[] };
 type Load = { days: LoadDay[] };
 type Calendar = { start: string; end: string; days: CalendarDay[] };
@@ -49,10 +49,10 @@ function Stats({ data, kind }: { data: Summary | null; kind: string }) {
       <Stat icon="route" tone="var(--orange)" label="מרחק" unit='ק"מ' onClick={jump("workouts-list")}
         value={t && fmt(t.distance_km, t.distance_km < 100 ? 1 : 0)}
         delta={t && prev ? change(t.distance_km, prev.distance_km, kind) : undefined} />
-      <Stat icon="clock" tone="var(--sport-running)" label="זמן תנועה" unit="ש׳" onClick={jump("workouts-hours")}
-        value={t && fmt(t.moving_hours, 1)}
-        delta={t && prev ? change(t.moving_hours, prev.moving_hours, kind) : undefined}
-        sub={t && t.moving_hours >= 24 ? `${fmt(t.moving_hours / 24, 1)} ימים מלאים` : undefined} />
+      <Stat icon="clock" tone="var(--sport-running)" label="זמן אימון" unit="ש׳" onClick={jump("workouts-hours")}
+        value={t && fmt(t.hours, 1)}
+        delta={t && prev ? change(t.hours, prev.hours, kind) : undefined}
+        sub={t && t.hours >= 24 ? `${fmt(t.hours / 24, 1)} ימים מלאים` : undefined} />
       <Stat icon="mountain" tone="var(--sport-swimming)" label="טיפוס" unit="מ׳"
         value={t && fmt(t.elevation_m)}
         sub={t && t.elevation_m >= 2000 ? `${fmt(t.elevation_m / 8849, 1)} אוורסטים` : undefined} />

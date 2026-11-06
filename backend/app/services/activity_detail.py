@@ -8,9 +8,10 @@ What comes out:
                 cadence, power, lat/lon - downsampled to MAX_POINTS
     track       the GPS line for the map, with everything within
                 PRIVACY_RADIUS_M of the start and of the end removed
-    splits      per km (per 5 km cycling), computed from the stream itself
-                so it doesn't depend on the watch's lap settings
-    laps        the watch's own laps
+    splits      per km (per 5 km cycling): the watch's own auto-laps when
+                they are exactly that - so every km matches the watch - else
+                computed from the stream (manual or interval laps)
+    laps        the watch's own laps, timer time like the watch
     lengths     pool swims: every length, with stroke, strokes and SWOLF
     zones       seconds in each heart-rate zone
     drift       cardiac drift, %: how much more heart rate the same speed
@@ -33,6 +34,16 @@ DEFAULT_SPLIT_METERS = 1000
 SPLIT_SPORTS = {"running", "walking", "cycling"}
 MIN_DRIFT_SECONDS = 20 * 60
 MOVING_SPEED = 0.5  # m/s; slower is standing still
+# A lap within 2% of the split distance is an auto-lap of it (GPS lands a
+# few metres either side of 1000).
+AUTO_LAP_TOLERANCE = 0.02
+# 3: splits and laps use the watch's timer time (were moving time / the stream).
+DETAIL_VERSION = 3
+
+
+def is_current(detail: Optional[dict]) -> bool:
+    """False for no detail and for one built by older code - both get fetched again."""
+    return detail is not None and (detail.get("version") or 1) >= DETAIL_VERSION
 
 
 def _column(rows: list, index: dict, *keys: str) -> list:
@@ -117,6 +128,40 @@ def _splits(t: list, d: list, hr: list, elev: list, sport: str) -> list:
     return splits
 
 
+def _lap_splits(laps: dict, sport: str) -> list:
+    """
+    The splits straight from the watch's auto-laps: Garmin's lap time (timer,
+    like the watch) and lap average speed. Empty when the laps aren't per-km
+    auto-laps (manual laps, intervals) - the stream splits are used then.
+    """
+    if sport not in SPLIT_SPORTS:
+        return []
+    unit = SPLIT_METERS.get(sport, DEFAULT_SPLIT_METERS)
+    dtos = [lap for lap in (laps or {}).get("lapDTOs") or []
+            if (lap.get("distance") or 0) > 0 and (lap.get("duration") or 0) > 0]
+    if len(dtos) < 2:
+        return []
+    margin = unit * AUTO_LAP_TOLERANCE
+    if any(abs(lap["distance"] - unit) > margin for lap in dtos[:-1]) or dtos[-1]["distance"] > unit + margin:
+        return []
+
+    splits = []
+    for i, lap in enumerate(dtos, start=1):
+        meters, seconds, speed = lap["distance"], lap["duration"], lap.get("averageSpeed")
+        if abs(meters - unit) <= margin:
+            meters = unit
+        pace = unit / speed if speed and speed > 0 else seconds / meters * unit
+        splits.append({
+            "index": i,
+            "meters": round(meters),
+            "seconds": round(seconds, 1),
+            "pace": round(pace, 1),
+            "avg_hr": round(lap["averageHR"]) if lap.get("averageHR") else None,
+            "gain": round(lap.get("elevationGain") or 0),
+        })
+    return splits
+
+
 def _drift(t: list, hr: list, speed: list) -> Optional[float]:
     if not t or not hr or not speed or (t[-1] or 0) - (t[0] or 0) < MIN_DRIFT_SECONDS:
         return None
@@ -158,7 +203,8 @@ def _laps(laps: dict) -> tuple[list, list]:
         out.append({
             "index": lap.get("lapIndex"),
             "meters": _r(lap.get("distance"), 0),
-            "seconds": _r(lap.get("movingDuration") or lap.get("duration"), 0),
+            # Timer time, as the watch shows the lap - not moving time.
+            "seconds": _r(lap.get("duration"), 1),
             "avg_hr": _r(lap.get("averageHR"), 0),
             "avg_speed": _r(lap.get("averageSpeed"), 3),
             "gain": _r(lap.get("elevationGain"), 0),
@@ -223,14 +269,15 @@ def build_detail(streams: dict, laps: dict, zones, sport: str) -> dict:
 
     lap_list, lengths = _laps(laps)
     return {
-        "version": 2,  # 2: foot cadence is full steps per minute (was one foot)
+        # 2: foot cadence is full steps per minute (was one foot); 3: see DETAIL_VERSION.
+        "version": DETAIL_VERSION,
         "points": {
             "t": pick(t, 0), "d": pick(d, 0), "hr": pick(hr, 0), "speed": pick(speed, 3),
             "elev": pick(elev, 1), "cad": pick(cad, 0), "power": pick(power, 0),
             "lat": pick(list(lat), 5), "lon": pick(list(lon), 5),
         },
         "track": track,
-        "splits": _splits(t, d, hr, elev, sport),
+        "splits": _lap_splits(laps, sport) or _splits(t, d, hr, elev, sport),
         "split_meters": SPLIT_METERS.get(sport, DEFAULT_SPLIT_METERS),
         "laps": lap_list,
         "lengths": lengths,

@@ -212,3 +212,51 @@ def test_someone_elses_workout_is_404(client, make_user, make_activity):
     a = make_activity(other)
     assert client.get(f"/api/activities/{a.id}", headers=headers(me)).status_code == 404
     assert client.get("/api/activities", headers=headers(me)).json()["activities"] == []
+
+
+# --- The watch's own numbers ------------------------------------------------
+
+def auto_laps(*laps):
+    """(metres, timer seconds, moving seconds, average speed) per lap."""
+    return {"lapDTOs": [
+        {"lapIndex": i, "distance": m, "duration": t, "movingDuration": mv, "averageSpeed": v,
+         "averageHR": 150, "elevationGain": 4}
+        for i, (m, t, mv, v) in enumerate(laps, start=1)
+    ]}
+
+
+def test_km_splits_are_the_watchs_auto_laps():
+    # Km 2 had a stop at a light with the timer running: the watch says
+    # 5:30 for it, moving time would say 5:05.
+    laps = auto_laps((1000.4, 301.2, 301.0, 3.32), (999.1, 330.6, 305.0, 3.03), (512.0, 150.3, 150.3, 3.41))
+    splits = ad.build_detail(run_streams(), laps, [], "running")["splits"]
+    assert [s["meters"] for s in splits] == [1000, 1000, 512]
+    assert [s["seconds"] for s in splits] == [301.2, 330.6, 150.3]
+    assert splits[1]["pace"] == round(1000 / 3.03, 1)  # Garmin's lap speed, not ours
+    assert splits[0]["avg_hr"] == 150
+
+
+def test_manual_laps_fall_back_to_stream_splits():
+    laps = auto_laps((400, 80, 80, 5.0), (1600, 480, 480, 3.33))  # intervals, not per km
+    splits = ad.build_detail(run_streams(), laps, [], "running")["splits"]
+    assert [s["index"] for s in splits] == [1, 2, 3, 4, 5]
+    assert all(s["meters"] == 1000 for s in splits)
+
+
+def test_laps_keep_timer_time_not_moving_time():
+    laps = auto_laps((1000, 330.6, 305.0, 3.03), (1000, 300, 300, 3.33))
+    assert ad.build_detail({}, laps, [], "running")["laps"][0]["seconds"] == 330.6
+
+
+def test_a_detail_built_by_older_code_is_fetched_again(client, make_user, make_activity, session, monkeypatch):
+    monkeypatch.setattr(activity_page, "request_detail", lambda activity_id: "pending")
+    user = make_user()
+    a = make_activity(user, garmin_activity_id=321)
+    a.detail = {**ad.build_detail(run_streams(), {}, [], "running"), "version": 2}
+    session.add(a)
+    session.commit()
+    body = client.get(f"/api/activities/{a.id}", headers=headers(user)).json()
+    assert body["status"] == "pending"
+    assert body["detail"]["splits"]  # the old one stays on screen meanwhile
+    assert ad.is_current(ad.build_detail(run_streams(), {}, [], "running"))
+    assert not ad.is_current(None)

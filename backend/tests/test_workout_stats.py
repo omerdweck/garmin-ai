@@ -108,7 +108,7 @@ def test_week_totals_and_hours_by_sport(client, make_user, make_activity):
     body = client.get("/api/workouts?kind=week", headers=headers(user)).json()
 
     assert body["start"] == "2026-10-25" and body["end"] == "2026-10-31"
-    assert body["totals"] == {"workouts": 2, "distance_km": 11.5, "moving_hours": 1.4, "elevation_m": 120}
+    assert body["totals"] == {"workouts": 2, "distance_km": 11.5, "hours": 1.5, "elevation_m": 120}
     assert body["previous"]["workouts"] == 1
     assert body["bucket"] == "day"
     assert len(body["hours_by_sport"]) == 7
