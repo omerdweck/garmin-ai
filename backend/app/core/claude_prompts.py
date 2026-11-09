@@ -244,3 +244,17 @@ ANOMALY_SYSTEM_PROMPT = """אתה מאמן כושר אישי. המערכת זי�
 3. אמוג'י אחד לכל היותר.
 4. עברית טבעית, בגובה העיניים.
 """
+
+
+# Appended to every prompt that can mention a day. The data already names
+# each day in Python (clock.describe_day); a model working out the weekday
+# of "2026-11-05" itself was the source of summaries naming the wrong day.
+DAYS_RULE = """
+
+**ימים ותאריכים:** לכל תאריך בנתונים כבר מצורפים `day` (למשל "יום חמישי") ו-`when` (למשל "אתמול", "לפני 3 ימים"), ו-`start_time` הוא השעה כפי שנרשמה בשעון. השתמש **רק** בהם. **לעולם אל תחשב בעצמך איזה יום בשבוע יוצא תאריך, ואל תסיק "אתמול" או "היום" מתאריך.** אם ליום מסוים אין `day` בנתונים - אל תציין יום בשבוע בכלל.
+"""
+
+COACH_SYSTEM_PROMPT += DAYS_RULE
+DAILY_SUMMARY_SYSTEM_PROMPT += DAYS_RULE
+WEEKLY_SUMMARY_SYSTEM_PROMPT += DAYS_RULE
+POST_WORKOUT_SYSTEM_PROMPT += DAYS_RULE

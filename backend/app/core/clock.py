@@ -27,6 +27,7 @@ app/db/session.py pins every connection to UTC for exactly that reason.
 """
 
 from datetime import date, datetime, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 LOCAL_TZ = ZoneInfo("Asia/Jerusalem")
@@ -68,3 +69,35 @@ def utc_to_local_date(stamp: datetime) -> date:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     return stamp.astimezone(LOCAL_TZ).date()
+
+
+# Sunday first - the Israeli week. Python's weekday() is Monday=0.
+_DAY_NAMES_HE = ("ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת")
+
+
+def day_name(day: date) -> str:
+    """"יום חמישי" for 2026-11-05."""
+    return f"יום {_DAY_NAMES_HE[(day.weekday() + 1) % 7]}"
+
+
+def relative_day(day: date, ref: Optional[date] = None) -> str:
+    """"היום", "אתמול", "לפני 4 ימים", "מחר" - against today in Israel."""
+    diff = ((ref or today()) - day).days
+    if diff == 0:
+        return "היום"
+    if diff == 1:
+        return "אתמול"
+    if diff == 2:
+        return "שלשום"
+    if diff == -1:
+        return "מחר"
+    return f"לפני {diff} ימים" if diff > 0 else f"בעוד {-diff} ימים"
+
+
+def describe_day(day: date, ref: Optional[date] = None) -> dict:
+    """
+    A date as the AI should say it. A language model asked to work out the
+    weekday of "2026-11-05" itself gets it wrong often enough to matter -
+    so every date it receives comes with the day already named.
+    """
+    return {"date": day.isoformat(), "day": day_name(day), "when": relative_day(day, ref)}

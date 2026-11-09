@@ -150,7 +150,17 @@ def build_weekly_facts(session: Session, user_id: int, end: Optional[date_type] 
         return {"this_week": fn(this_activities), "last_week": fn(prev_activities)}
 
     facts = {
-        "week": {"from": this_start.isoformat(), "to": this_end.isoformat()},
+        "week": {"from": this_start.isoformat(), "from_day": clock.day_name(this_start),
+                 "to": this_end.isoformat(), "to_day": clock.day_name(this_end)},
+        # Each workout on the day the watch recorded it - without this list
+        # the model had only totals, and any day it named was a guess.
+        "workouts_by_day": [
+            {**clock.describe_day(a.start_time.date(), end), "time": a.start_time.strftime("%H:%M"),
+             "type": a.activity_type, "name": a.activity_name,
+             "minutes": round((a.duration_seconds or 0) / 60, 1),
+             "km": round((a.distance_meters or 0) / 1000, 2) or None}
+            for a in sorted(this_activities, key=lambda a: a.start_time)
+        ],
         "workouts": pair(_workout_block),
         "steps": pair(_metric_sum, "steps"),
         "sleep_minutes": pair(_metric_avg, "sleep_duration_minutes"),

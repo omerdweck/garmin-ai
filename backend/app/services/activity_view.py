@@ -17,6 +17,7 @@ from typing import Callable, Optional
 
 from sqlmodel import Session, col, select
 
+from app.core import clock
 from app.models.activity import SOURCE_MANUAL, Activity
 from app.services.activity_numbers import mm_ss, pace_seconds, timer_seconds, watch_time
 
@@ -364,7 +365,7 @@ def format_activity_detail(activity: Activity) -> str:
 
     lines = [
         _rtl(f"*{type_label(activity.activity_type)}*"),
-        _rtl(f"_{activity.start_time.strftime('%A, %d/%m/%Y · %H:%M')}_"),
+        _rtl(f"_{clock.day_name(activity.start_time.date())}, {activity.start_time.strftime('%d/%m/%Y · %H:%M')}_"),
         "",
     ]
     lines.extend(formatter(activity))

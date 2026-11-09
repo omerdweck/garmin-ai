@@ -103,3 +103,25 @@ def test_nothing_reads_the_server_clock_directly():
                 offenders.append(f"{path.relative_to(APP.parent)}:{number}: {line.strip()}")
 
     assert offenders == [], "use app.core.clock instead:\n" + "\n".join(offenders)
+
+
+# --- Day names: computed here, never by the model ---------------------------
+
+def test_day_names_start_the_week_on_sunday():
+    from datetime import date as _date
+
+    from app.core import clock as _clock
+    assert _clock.day_name(_date(2026, 11, 8)) == "יום ראשון"
+    assert _clock.day_name(_date(2026, 11, 5)) == "יום חמישי"
+    assert _clock.day_name(_date(2026, 11, 7)) == "יום שבת"
+
+
+def test_relative_days_against_israel_today():
+    from datetime import date as _date
+
+    from app.core import clock as _clock
+    monday = _date(2026, 11, 9)
+    assert [_clock.relative_day(_date(2026, 11, d), monday) for d in (9, 8, 7, 5, 10)] == [
+        "היום", "אתמול", "שלשום", "לפני 4 ימים", "מחר"]
+    assert _clock.describe_day(_date(2026, 11, 5), monday) == {
+        "date": "2026-11-05", "day": "יום חמישי", "when": "לפני 4 ימים"}

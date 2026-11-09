@@ -623,7 +623,7 @@ TOOLS = [
 def _metric_to_dict(metric: DailyMetric) -> dict:
     """Compact projection - only fields worth spending context tokens on."""
     fields = {
-        "date": metric.date.isoformat(),
+        **clock.describe_day(metric.date),
         "sleep_minutes": metric.sleep_duration_minutes,
         "deep_sleep_minutes": metric.deep_sleep_minutes,
         "rem_sleep_minutes": metric.rem_sleep_minutes,
@@ -684,7 +684,10 @@ def _activity_to_dict(activity: Activity) -> dict:
         # would be tokens spent restating the default. Its presence is the
         # signal that the missing fields below are missing by nature.
         "manually_entered": True if activity.source == SOURCE_MANUAL else None,
-        "start_time": activity.start_time.isoformat(),
+        # The watch's own start time (Garmin's startTimeLocal), with the day
+        # named here rather than left for the model to work out.
+        **clock.describe_day(activity.start_time.date()),
+        "start_time": activity.start_time.strftime("%H:%M"),
         # The watch's timer time, as the watch shows it - the coach quotes
         # it back, and "35.5 minutes" next to a watch saying 35:29.8 reads as a mismatch.
         "duration": watch_time(timer_seconds(activity)),
@@ -1179,7 +1182,8 @@ def chat_with_coach(session: Session, user: User, user_message: str) -> tuple[st
     # Today's date is prepended to the *user turn*, never to the system
     # prompt: the system prompt is the cached prefix, and a date inside it
     # would change daily and silently destroy every cache hit.
-    dated_message = f"[היום: {clock.today().isoformat()}]\n{user_message}"
+    now = clock.today()
+    dated_message = f"[היום: {clock.day_name(now)}, {now.isoformat()}]\n{user_message}"
     messages: list[dict] = history + [{"role": "user", "content": dated_message}]
 
     system = [
@@ -1308,7 +1312,7 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
     meal_plan = fetch_meal_plan(session, user.id) if calorie_block.get("tracking") else None
 
     payload = {
-        "today": today,
+        "today": clock.describe_day(today_date),
         "goal": user.training_goal,
         "athlete": profile_as_dict(session, user.id),
         "daily_metrics_last_7_days": metrics,
@@ -1356,7 +1360,7 @@ def generate_daily_summary(session: Session, user: User) -> Optional[str]:
             {
                 "role": "user",
                 "content": (
-                    f"הנה הנתונים של המשתמש. כתוב את סיכום היום עבור {today}.\n\n"
+                    f"הנה הנתונים של המשתמש. כתוב את סיכום היום עבור {clock.day_name(today_date)}, {today}.\n\n"
                     f"{json.dumps(payload, ensure_ascii=False)}"
                 ),
             }
